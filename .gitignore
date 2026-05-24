@@ -28,3 +28,7 @@ checkpoints/
 #? 5. System/OS Files
 .DS_Store
 Thumbs.db
+
+#? 6. Compiled Installers
+installers/Output/
+*.exe
