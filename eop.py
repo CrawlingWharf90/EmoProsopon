@@ -1,7 +1,9 @@
 import os
 import shutil
 import sys
+import urllib.request
 import json
+import tempfile
 import subprocess
 import time
 
@@ -18,12 +20,131 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, '.eop_config')
 VERSION_FILE = os.path.join(BASE_DIR, 'VERSION')
 
+#* ─────────────────────────────────────────────────────────────────
+#* INSTALLER AND HELPER FUNCTIONS
+#* ───────────────────────────────────────────────────────────────── 
 def get_version():
     try:
         with open(VERSION_FILE, 'r') as f:
             return f.readline().strip()
     except:
-        return "0.0.1"
+        return "unversioned"
+
+def run_update():
+    print(f"\n{CYAN}--- EmoProsopon Updater ---{RESET}")
+    print(f"{YELLOW}Checking for updates...{RESET}")
+    
+    current_version = get_version()
+    
+    REPO_API_URL = "https://api.github.com/repos/CrawlingWharf90/EmoProsopon/releases/latest"
+    
+    try:
+        #? 1. Ping GitHub for the latest release
+        req = urllib.request.Request(REPO_API_URL, headers={'User-Agent': 'EmoProsopon-Updater'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode())
+            
+            latest_tag = data.get("tag_name", "0.0.0").replace("v", "") 
+            
+            if latest_tag > current_version:
+                print(f"\n{GREEN}🚀 Update Available! ({current_version} -> {latest_tag}){RESET}")
+                print(f"{CYAN}Release Notes:{RESET}\n{data.get('body', 'No release notes provided.')}\n")
+                
+                choice = input("Do you want to download and install this update now? (y/n): ").strip().lower()
+                
+                if choice in ['y', 'yes']:
+                    print(f"\n{YELLOW}Connecting to GitHub to download assets...{RESET}")
+                    
+                    assets = data.get('assets', [])
+                    installer_url = None
+                    installer_name = None
+                    
+                    #? 2. Find the correct installer asset based on OS
+                    for asset in assets:
+                        if os.name == 'nt' and asset['name'].endswith('.exe'):
+                            installer_url = asset['browser_download_url']
+                            installer_name = asset['name']
+                            break
+                        elif os.name != 'nt' and asset['name'].endswith('.sh'):
+                            installer_url = asset['browser_download_url']
+                            installer_name = asset['name']
+                            break
+                        
+                    if not installer_url:
+                        print(f"{RED}Could not find a compatible installer in the release.{RESET}")
+                        print(f"{GREEN}Please visit https://github.com/CrawlingWharf90/EmoProsopon/releases to download manually.{RESET}")
+                        return
+
+                    #? 3. Download to the OS temporary directory
+                    temp_dir = tempfile.gettempdir()
+                    temp_installer_path = os.path.join(temp_dir, installer_name)
+                    
+                    print(f"{CYAN}Downloading {installer_name}... Please wait.{RESET}")
+                    try:
+                        urllib.request.urlretrieve(installer_url, temp_installer_path)
+                    except Exception as e:
+                        print(f"{RED}Download failed: {e}{RESET}")
+                        return
+                        
+                    print(f"{GREEN}Download complete! Launching installer...{RESET}")
+                    
+                    #? 4. Launch the installer and exit
+                    if os.name == 'nt':
+                        subprocess.Popen([temp_installer_path])
+                        
+                    #! Kill this process immediately so Inno Setup can overwrite EmoProsopon files without a lock error
+                    sys.exit(0)
+                    
+            else:
+                print(f"{GREEN}You are already running the latest version (v{current_version}).{RESET}")
+                
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"{YELLOW}Update check bypassed: No public releases found yet (or repo is private).{RESET}")
+        else:
+            print(f"{RED}Failed to check for updates (HTTP {e.code}).{RESET}")
+    except Exception as e:
+        print(f"{RED}Failed to check for updates. Are you connected to the internet?{RESET}")
+        # print(f"Debug: {e}")
+
+def run_uninstall(py_cmd):
+    print(f"\n{CYAN}Launching EmoProsopon Uninstaller...{RESET}")
+    
+    if os.name == 'nt':
+        #? Inno Setup automatically generates unins000.exe in the installation root
+        uninstaller = os.path.join(BASE_DIR, "unins000.exe")
+        if os.path.exists(uninstaller):
+            subprocess.Popen([uninstaller]) # Use Popen so the CLI doesn't lock up
+            sys.exit(0)
+        else:
+            print(f"{RED}Uninstaller not found. (Are you running this from the installed directory?){RESET}")
+    else:
+        #? Launch custom Unix GUI in uninstall mode
+        unix_gui = os.path.join(BASE_DIR, "installers", "unix_manager.py")
+        if os.path.exists(unix_gui):
+            subprocess.run([py_cmd, unix_gui, "--uninstall"])
+        else:
+            print(f"{RED}Unix manager script not found.{RESET}")
+
+def run_installer(py_cmd):
+    print(f"\n{CYAN}Launching EmoProsopon Installer...{RESET}")
+    
+    if os.name == 'nt':
+        #! Point to the default Inno Setup output folder
+        installer_exe = os.path.join(BASE_DIR, "installers", "Output", "EmoProsopon_Installer_v1.0.exe")
+        if os.path.exists(installer_exe):
+            subprocess.Popen([installer_exe])
+            sys.exit(0)
+        else:
+            print(f"{RED}Installer executable not found at {installer_exe}.{RESET}")
+            print(f"{YELLOW}Please run the .exe you downloaded, or compile the .iss file in Inno Setup.{RESET}")
+    else:
+        #! Launch custom Unix GUI in install mode
+        unix_gui = os.path.join(BASE_DIR, "installers", "unix_manager.py")
+        if os.path.exists(unix_gui):
+            subprocess.run([py_cmd, unix_gui])
+        else:
+            print(f"{RED}Unix manager script not found.{RESET}")
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -53,7 +174,6 @@ def get_installed_pythons():
         path = shutil.which(cmd)
         if path and path not in seen:
             seen.add(path)
-            # Verify it actually returns a version to ensure it's not a broken alias
             try:
                 ver = subprocess.check_output([cmd, "--version"], stderr=subprocess.STDOUT).decode().strip()
                 found.append((cmd, ver))
@@ -80,9 +200,8 @@ def get_python_cmd():
         print("Please install Python 3.12 from python.org")
         sys.exit(1)
 
-    # Display the list
     for idx, (cmd, ver) in enumerate(pythons):
-        # Highlight 3.12
+        #? Highlight 3.12
         color = GREEN if "3.12" in ver else YELLOW
         print(f"{idx + 1}. {color}{cmd:<15} ({ver}){RESET}")
     
@@ -97,7 +216,6 @@ def get_python_cmd():
                 py_cmd = pythons[idx][0]
                 break
         else:
-            # User provided a custom command
             if choice:
                 py_cmd = choice
                 break
@@ -146,17 +264,17 @@ def print_status(py_cmd):
     print(" SYSTEM STATUS ".center(50, "="))
     print("="*50)
     
-    # 1. Pip Requirements
+    #? 1. Pip Requirements
     pip_ok = check_pip_requirements(py_cmd)
     pip_str = f"[{GREEN}Completed{RESET}]" if pip_ok else f"[{RED}Missing{RESET}]"
     print(f"Pip Requirements:           {pip_str}")
     
-    # 2. Models
+    #? 2. Models
     models_found = check_models()
     mod_str = f"[{GREEN}Completed{RESET}]" if models_found == 4 else f"[{RED}Missing ({models_found}/4){RESET}]"
     print(f"Core AI Models:             {mod_str}")
     
-    # 3. Datasets
+    #? 3. Datasets
     dl_count, ex_count = get_dataset_counts()
     dl_str = f"[{GREEN}{dl_count} Downloaded{RESET}]" if dl_count > 0 else f"[{YELLOW}0 Downloaded{RESET}]"
     ex_str = f"[{GREEN}{ex_count} Extracted{RESET}]" if ex_count > 0 else f"[{YELLOW}0 Extracted{RESET}]"
@@ -173,9 +291,9 @@ def check_launch_requirements(py_cmd):
         clear_screen()
         print(f"{RED}!!! CANNOT START EMO-PROSOPOPON !!!{RESET}\n")
         if not pip_ok:
-            print(f"{YELLOW}- Missing Python libraries. Run '{CYAN}eop require{YELLOW}' or '{CYAN}eop setup{YELLOW}'.{RESET}")
+            print(f"{YELLOW}- Missing Python libraries. Run '{CYAN}eop --require{YELLOW}' or '{CYAN}eop --setup{YELLOW}'.{RESET}")
         if models_found < 4:
-            print(f"{YELLOW}- Missing Core AI Models. Run '{CYAN}eop tui models{YELLOW}' or '{CYAN}eop setup{YELLOW}'.{RESET}")
+            print(f"{YELLOW}- Missing Core AI Models. Run '{CYAN}eop --tui models{YELLOW}' or '{CYAN}eop --setup{YELLOW}'.{RESET}")
         
         input(f"\nPress Enter to exit...")
         sys.exit(1)
@@ -201,6 +319,15 @@ def display_help():
 
     print(f"{GREEN}eop --train [all|harvest|model] (-n){RESET}")
     print("    Run ML training pipeline")
+
+    print(f"{GREEN}eop --update (-u){RESET}")
+    print("    Check for and apply the latest updates")
+
+    print(f"{GREEN}eop --uninstall (-un){RESET}")
+    print("    Launch the uninstaller GUI")
+
+    print(f"{GREEN}eop --installer (-i){RESET}")
+    print("    Open the installer GUI")
 
     print(f"{GREEN}eop --version (-v){RESET}")
     print("    Show installed version")
@@ -243,16 +370,16 @@ def run_setup(py_cmd):
     clear_screen()
     print(f"{CYAN}--- EMO-PROSOPOPON SETUP WIZARD ---{RESET}\n")
     
-    # 1. Require
+    #? 1. Require
     print(f"[{GREEN}1/3{RESET}] Installing Pip Dependencies...")
     subprocess.run([py_cmd, "-m", "pip", "install", "-r", os.path.join("downloaders", "requirements.txt")])
     
-    # 2. Models
+    #? 2. Models
     print(f"\n[{GREEN}2/3{RESET}] Launching Model Manager...")
     time.sleep(1)
     run_tui("models", py_cmd)
     
-    # 3. Data Prompt
+    #? 3. Data Prompt
     clear_screen()
     print(f"[{GREEN}3/3{RESET}] Training Data")
     choice = input(f"\nDo you want to download and extract datasets for training now? (y/n): ").strip().lower()
@@ -311,15 +438,27 @@ def main():
         if sub_cmd in ["all", "model"]:
             print(f"{CYAN}Running LSTM Trainer...{RESET}")
             subprocess.run([py_cmd, os.path.join("trainers", "train_emotion_model.py")])
+
+    elif command in ['--update', '-u']:
+        run_update()
+
+    elif command in ['--uninstall', '-un']:
+        run_uninstall(py_cmd)
+
+    elif command in ['--installer', '-i']:
+        run_installer(py_cmd)
+
     elif command in ['--version', '-v']:
         version = get_version()
         print(f"\nEmoProsopon Version: {GREEN}{version}{RESET}\n")
+
     elif command in ['--change-python', '-cp']:
         config = get_config()
         config.pop('python_cmd', None)
         save_config(config)
         py_cmd = get_python_cmd()
         print_status(py_cmd)
+
     else:
         print(f"{RED}Unknown command: {command}{RESET}")
         display_help()
