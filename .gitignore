@@ -1,41 +1,30 @@
-# Prerequisites
-*.d
+#* ─────────────────────────────────────────────────────────────────
+#* EmoProsopopon .gitignore
+#* ─────────────────────────────────────────────────────────────────
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+#? 1. Local Configuration & Settings
+.eop_config
+.vscode/
+.idea/
 
-# Precompiled Headers
-*.gch
-*.pch
+#? 2. Python Bytecode & Environments
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+.env
 
-# Linker files
-*.ilk
+#? 3. Dataset Directories (GIGABYTES of data)
+dataset/
+unpkged_datasets/
+sorted_datasets/
+processed_data/
 
-# Debugger Files
-*.pdb
+#? 4. AI Models & Checkpoints
+models/
+checkpoints/
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
-*.dwo
+#? 5. System/OS Files
+.DS_Store
+Thumbs.db
