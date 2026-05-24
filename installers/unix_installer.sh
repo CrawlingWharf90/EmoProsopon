@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Terminal Colors
+#* Terminal Colors
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
@@ -10,39 +10,45 @@ NC='\033[0m'
 
 echo -e "${CYAN}--- EmoProsopon Installer ---${NC}"
 
-# 1. Dynamically calculate the size of the repository
-# 'du -sh' gets the human-readable size (e.g., 45M, 1.2G) of the parent folder
-REPO_SIZE=$(du -sh ../ | awk '{print $1}')
+REPO_URL="https://github.com/CrawlingWharf90/EmoProsopon.git"
+INSTALL_DIR="$HOME/.emoprosopon"
 
-echo -e "Estimated Installation Space Required: ${YELLOW}${REPO_SIZE}${NC}\n"
-
-# 2. Prompt the user for confirmation
-read -p "Do you want to proceed with the installation? (y/n): " -n 1 -r
-echo ""
-
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo -e "${RED}Installation aborted by user.${NC}"
+#? 1. Check for Git
+if ! command -v git &> /dev/null; then
+    echo -e "${RED}Error: 'git' is not installed on this system.${NC}"
+    echo -e "Please install Git to continue the installation:"
+    echo -e "  - ${CYAN}Ubuntu/Debian:${NC} sudo apt install git"
+    echo -e "  - ${CYAN}macOS:${NC} brew install git ${YELLOW}(or run: xcode-select --install)${NC}"
+    echo -e "  - ${CYAN}Official Download:${NC} https://git-scm.com/downloads"
+    echo ""
     exit 1
 fi
 
-echo -e "\n${CYAN}Installing EmoProsopon...${NC}"
+#? 2. Prompt
+echo -e "This will download EmoProsopon to ${YELLOW}$INSTALL_DIR${NC}"
+read -p "Do you want to proceed? (y/n): " -n 1 -r
+echo ""
 
-INSTALL_DIR="$HOME/.emoprosopon"
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo -e "${RED}Installation aborted.${NC}"
+    exit 1
+fi
 
-# 3. Copy files to the local directory
+echo -e "\n${CYAN}Downloading from GitHub...${NC}"
+
+#? 3. Clone or Update
 if [ -d "$INSTALL_DIR" ]; then
-    echo "Updating existing installation..."
+    echo "Removing old installation..."
     rm -rf "$INSTALL_DIR"
 fi
 
-echo "Copying files to $INSTALL_DIR..."
-mkdir -p "$INSTALL_DIR"
-cp -r ../* "$INSTALL_DIR/"
+#? Use --depth 1 for a lightning-fast download that ignores git history
+git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
 
-# 4. Make the orchestrator executable
+#? 4. Permissions and Symlink
+echo -e "\n${CYAN}Setting up global command...${NC}"
 chmod +x "$INSTALL_DIR/eop.py"
 
-# 5. Create the global symlink
 echo "Creating global 'eop' command (may require password for sudo)..."
 sudo ln -sf "$INSTALL_DIR/eop.py" /usr/local/bin/eop
 
