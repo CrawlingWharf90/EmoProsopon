@@ -129,5 +129,5 @@ You may freely use this code for personal, non-commercial purposes.
 
 For commercial use, modification, or redistribution, please contact me for permission.
 
-See the [LICENSE](https://www.google.com/search?q=./LICENSE) file for full terms.
+See the [LICENSE](./LICENSE) file for full terms.
 
