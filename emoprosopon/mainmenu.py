@@ -1,5 +1,8 @@
+import os
+import sys
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk
 import mss
 import math
 import random
@@ -173,24 +176,89 @@ def launch_camera():
     root.destroy()
     landmarks.run_tracker(source_type="camera", source_val=0)
 
-def launch_video():
-    filepath = filedialog.askopenfilename(
-        title="Select Video",
-        filetypes=[("Video Files", "*.mp4 *.avi *.mov *.mkv")]
-    )
+def launch_video(forward=True, cli=False, path=None):
+    valid_extensions = ['.mp4', '.avi', '.mov', '.mkv']
+    if path:
+        if not os.path.exists(path):
+            print(f"\n\033[91m[Error] File not found: {path}\033[0m\n")
+            sys.exit(1)
+            
+        _, ext = os.path.splitext(path)
+        
+        if ext.lower() not in valid_extensions:
+            print(f"\n\033[91m[Error] Invalid file type: {ext}\033[0m\n")
+            sys.exit(1)
+            
+        filepath = path
+    else:
+        filepath = filedialog.askopenfilename(
+            title="Select Video",
+            filetypes=[("Video Files", "*.mp4 *.avi *.mov *.mkv")]
+        )
 
     if filepath:
-        #! Hide menu instead of destroying it
-        root.withdraw()
-        landmarks.run_tracker(source_type="video", source_val=filepath)
-        root.deiconify()
+        if forward:
+            #! Hide menu instead of destroying it
+            root.withdraw()
+            landmarks.run_tracker(source_type="video", source_val=filepath)
+            root.deiconify()
+        else:
+            root.destroy()
+            landmarks.run_tracker(source_type="video", source_val=filepath)
+    else:
+        if cli:
+            print("\n\033[91m[Error] No video file selected. Please provide a valid file path.\033[0m\n")
+            sys.exit(1)
+        else:
+            tk.messagebox.showwarning("No File Selected", "Please select a video file to proceed.")
 
-def launch_screen():
-    selection = monitor_var.get()
-    monitor_index = int(selection.split(" ")[1])
+
+def launch_screen(monitor_index):
     root.destroy()
     landmarks.run_tracker(source_type="screen", source_val=monitor_index)
 
+def open_screen_selector_modal():
+    modal = tk.Toplevel(root)
+    modal.title("Select Screen")
+    modal.configure(bg="#0a0a0a")
+    modal.transient(root) # Keeps modal tied to the main window
+    modal.grab_set()      # Blocks interactions with the background menu
+    
+    title_lbl = tk.Label(modal, text="Select a Screen to Capture", font=("Georgia", 16), bg="#0a0a0a", fg="#ffffff")
+    title_lbl.pack(pady=15)
+    
+    container = tk.Frame(modal, bg="#0a0a0a")
+    container.pack(padx=20, pady=10)
+    
+    with mss.MSS() as sct:
+        monitors = sct.monitors[1:]
+        
+        for i, m in enumerate(monitors):
+            sct_img = sct.grab(m)
+            img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+            
+            img.thumbnail((250, 150), Image.Resampling.LANCZOS)
+            tk_img = ImageTk.PhotoImage(img)
+            
+            row = i // 3
+            col = i % 3
+            
+            card = tk.Frame(container, bg="#1a1a1a", bd=2, relief="ridge")
+            card.grid(row=row, column=col, padx=10, pady=10)
+            
+            img_lbl = tk.Label(card, image=tk_img, bg="#000000", cursor="hand2")
+            img_lbl.image = tk_img # Pin reference so Python's garbage collector doesn't delete it
+            img_lbl.pack(padx=5, pady=5)
+            
+            txt_lbl = tk.Label(card, text=f"Monitor {i + 1}", font=("Helvetica", 11), bg="#1a1a1a", fg="#00ffcc")
+            txt_lbl.pack(pady=5)
+            
+            def make_handler(idx):
+                return lambda e: [modal.destroy(), launch_screen(idx)]
+            
+            handler = make_handler(i + 1)
+            img_lbl.bind("<Button-1>", handler)
+            txt_lbl.bind("<Button-1>", handler)
 
 #* ─────────────────────────────────────────────────────────────────
 #* MAIN WINDOW
@@ -236,16 +304,14 @@ with mss.MSS() as sct:
     num_monitors = len(sct.monitors) - 1
     monitor_list = [f"Monitor {i}" for i in range(1, num_monitors + 1)]
 
-monitor_var = tk.StringVar(root, value=monitor_list[0] if monitor_list else "Monitor 1")
-
 button_defs = [
     ("Live Camera",     launch_camera),
-    ("Load Video",      launch_video),
-    ("Capture Screen",  launch_screen),
+    ("Load Video",      lambda: launch_video(forward=True, cli=False, path=None)),
+    ("Capture Screen",  open_screen_selector_modal),
     ("Exit",            root.destroy)
 ]
 
-ui_buttons = [] # Store references to scale them later
+ui_buttons = []
 
 for text, cmd in button_defs:
     btn = StyledButton(buttons_frame, text=text, command=cmd, width=BTN_W, height=BTN_H)
@@ -256,24 +322,70 @@ for text, cmd in button_defs:
 #* DYNAMIC RESIZE HANDLER
 #* ─────────────────────────────────────────────────────────────────
 def _on_root_resize(event):
-    # Only react to the main window resizing, ignore child widget events
     if event.widget == root:
         w, h = event.width, event.height
-        if w < 10 or h < 10: return # Prevent math errors on minimize
+        if w < 10 or h < 10: return 
         
         s = scale(640, 480, w, h)
         
-        # Scale Labels
         title_label.config(font=("Georgia", int(28 * s), "bold"))
         desc_label.config(font=("Helvetica", int(11 * s)))
         
-        # Scale Buttons
         for btn in ui_buttons:
             btn.width = int(BTN_W * s)
             btn.height = int(BTN_H * s)
             btn._fs = int(13 * s)
             btn.config(width=btn.width, height=btn.height)
-            btn._draw() # Force redraw with new dimensions
+            btn._draw()
 
+#* ─────────────────────────────────────────────────────────────────
+#* DYNAMIC RESIZE HANDLER
+#* ─────────────────────────────────────────────────────────────────
 root.bind("<Configure>", _on_root_resize)
+
+#* ─────────────────────────────────────────────────────────────────
+#* CLI ARGUMENT PARSING (BYPASS MENU)
+#* ─────────────────────────────────────────────────────────────────
+if len(sys.argv) > 1:
+    mode = sys.argv[1].lower()
+    
+    if mode == "live":
+        root.withdraw()
+        launch_camera()
+        sys.exit(0)
+        
+    elif mode == "video":
+        root.withdraw()
+        forward_arg = True
+        path_arg = None
+
+        for arg in sys.argv[2:]:
+            arg_lower = arg.lower()
+            if arg_lower.startswith("forward="):
+                val = arg_lower.split("=")[1]
+                forward_arg = (val == "true")
+            elif arg_lower.startswith("path="):
+                path_arg = arg.split("=", 1)[1]
+                
+        launch_video(forward=forward_arg, cli=True, path=path_arg)
+        
+        if not forward_arg:
+            sys.exit(0)
+            
+    elif mode == "screen":
+        root.withdraw()
+        if len(sys.argv) > 2 and sys.argv[2].isdigit():
+            idx = int(sys.argv[2])
+            with mss.MSS() as sct:
+                num_monitors = len(sct.monitors) - 1
+                if 1 <= idx <= num_monitors:
+                    launch_screen(idx)
+                    sys.exit(0)
+                else:
+                    print(f"\n\033[91m[Error] Monitor {idx} has not been found. You have {num_monitors} monitor(s) available.\033[0m\n")
+                    sys.exit(1)
+        else:
+            print("\n\033[91m[Error] Please provide a valid monitor index (e.g., eop --start screen 1)\033[0m\n")
+            sys.exit(1)
+
 root.mainloop()

@@ -15,9 +15,9 @@ from kinematics import KinematicManager
 from HUD import HUDManager
 from trainers.train_emotion_model import EmotionLSTM 
 
-# ─────────────────────────────────────────────────────────────────
-#  MediaPipe & Configuration
-# ─────────────────────────────────────────────────────────────────
+#* ─────────────────────────────────────────────────────────────────
+#* MediaPipe & Configuration
+#* ─────────────────────────────────────────────────────────────────
 BaseOptions = mp.tasks.BaseOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
 
@@ -33,6 +33,7 @@ segmenter_options = mp.tasks.vision.ImageSegmenterOptions(
 )
 
 panic_mode = False
+model_loaded = False
 
 #* Order must strictly match the harvester script for the neural network!
 FEATURE_ORDER = [
@@ -95,12 +96,11 @@ class GlobalLandmark:
 #*  Main Engine Logic
 #* ─────────────────────────────────────────────────────────────────
 def run_tracker(source_type="camera", source_val=0):
-    global app_running, current_mp_image, landmark_histories
+    global app_running, current_mp_image, landmark_histories, model_loaded, panic_mode
     app_running = True
     
     if not panic_mode:
         hud = HUDManager(FACE_REGIONS.keys())
-        hud.panel_open = True
     
     lm_colors = {}
     if not panic_mode:
@@ -125,6 +125,9 @@ def run_tracker(source_type="camera", source_val=0):
     except Exception as e:
         print(f"⚠️ Could not load trained model: {e}")
         print(f"⚠️ Predictions are disabled. Run 'eop train' to generate the model!")
+
+    if not panic_mode:
+        hud.model_loaded = model_loaded #! Inform the HUD about the model status
 
     EMOTION_MAP_REV = {0: "Neutral", 1: "Happy", 2: "Sad", 3: "Angry", 4: "Fear", 5: "Surprise", 6: "Disgust"}
     

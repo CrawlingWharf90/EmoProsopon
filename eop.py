@@ -401,6 +401,16 @@ def display_help():
     print(f"{GREEN}eop --extractor --syd <list>{RESET}")
     print("    Extract and sort datasets")
 
+    print(f"{GREEN}eop --start live{RESET}")
+    print("    Start the engine with live camera input")
+
+    print(f"{GREEN}eop --start video [forward=True/False] [path=\"...\"]{RESET}")
+    print("    Bypass the menu and analyze a video file.")
+    print("      - forward: If False, quits the app when the video ends (Default: True)")
+    print("      - path: Direct path to the video file (Skips the OS file picker)")
+
+    print(f"{GREEN}eop --start screen <index>{RESET}")
+    print("    Bypass the menu and capture a specific monitor (e.g., eop -s screen 1)")
     print("=" * 72 + "\n")
 
 def run_tui(target, py_cmd):
@@ -457,7 +467,8 @@ def main():
 
     if command in ['--start', '-s']:
         check_launch_requirements(py_cmd)
-        subprocess.run([py_cmd, os.path.join(BASE_DIR, "emoprosopon", "mainmenu.py")])
+        start_args = [py_cmd, os.path.join(BASE_DIR, "emoprosopon", "mainmenu.py")] + sys.argv[2:]
+        subprocess.run(start_args)
 
     elif command in ['--require', '-r']:
         run_require(py_cmd)

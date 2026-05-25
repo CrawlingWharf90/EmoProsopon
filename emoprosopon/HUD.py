@@ -20,7 +20,13 @@ class HUDManager:
         #* TOGGLES
         self.show_face_labels = True
         self.show_detected_emotion = True
-        
+        self.model_loaded = False 
+
+        #* COUNTER TOGGLES
+        self.show_face_counter = True
+        self.show_tracker_counter = True
+        self.show_fps_counter = True
+    
         self.last_detected_count = 0 
         
         self.region_colors = {
@@ -55,7 +61,14 @@ class HUDManager:
                 elif action == "toggle_show_labels":
                     self.show_face_labels = not self.show_face_labels
                 elif action == "toggle_show_emotions":
-                    self.show_detected_emotion = not self.show_detected_emotion
+                    if self.model_loaded:
+                        self.show_detected_emotion = not self.show_detected_emotion
+                elif action == "toggle_face_counter":
+                    self.show_face_counter = not self.show_face_counter
+                elif action == "toggle_tracker_counter":
+                    self.show_tracker_counter = not self.show_tracker_counter
+                elif action == "toggle_fps_counter":
+                    self.show_fps_counter = not self.show_fps_counter
                 elif action == "adj_max":
                     new_max = max(1, min(5, self.max_trackers + param))
                     if new_max > self.max_trackers:
@@ -164,16 +177,21 @@ class HUDManager:
         else:
             self._add_zone(cx - 40, cy - 40, 80, 80, "close_panel")
 
-    def _draw_toggle(self, frame, x, y, label, is_on, action_name):
-        """Helper to draw clean UI switches"""
-        cv2.putText(frame, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
+    def _draw_toggle(self, frame, x, y, label, is_on, action_name, disabled=False):
+        """Helper to draw clean UI switches with disabled states"""
+        txt_col = (100, 100, 100) if disabled else (200, 200, 200)
+        cv2.putText(frame, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, txt_col, 1)
         radius = 9
         pill_x = x + 230
         pill_y = y - 4
         pill_w = 24 
         
-        bg_col = (0, 200, 50) if is_on else (80, 80, 100)
-        knob_col = (255, 255, 255)
+        if disabled:
+            bg_col = (40, 40, 50)
+            knob_col = (80, 80, 90)
+        else:
+            bg_col = (0, 200, 50) if is_on else (80, 80, 100)
+            knob_col = (255, 255, 255)
         
         cv2.circle(frame, (pill_x, pill_y), radius, bg_col, -1, cv2.LINE_AA)
         cv2.circle(frame, (pill_x + pill_w, pill_y), radius, bg_col, -1, cv2.LINE_AA)
@@ -182,14 +200,24 @@ class HUDManager:
         knob_x = pill_x + pill_w if is_on else pill_x
         cv2.circle(frame, (knob_x, pill_y), radius - 2, knob_col, -1, cv2.LINE_AA)
         
-        self._add_zone(pill_x - 20, pill_y - 20, pill_w + 40, 40, action_name)
+        if not disabled:
+            self._add_zone(pill_x - 20, pill_y - 20, pill_w + 40, 40, action_name)
 
     def draw(self, frame, h, w, fps, occ_data_list, kin_data_list, detected_count):
         self.last_detected_count = detected_count 
         self.next_click_zones = [] 
         
-        cv2.putText(frame, f"Detected Faces: {detected_count} | Trackers Active: {self.max_trackers}", 
-                    (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 230, 120), 2, cv2.LINE_AA)
+        status_parts = []
+        if self.show_face_counter:
+            status_parts.append(f"Detected Faces: {detected_count}")
+        if self.show_tracker_counter:
+            status_parts.append(f"Trackers Active: {self.max_trackers}")
+        if self.show_fps_counter:
+            status_parts.append(f"FPS: {int(fps)}")
+            
+        if status_parts:
+            status_text = " | ".join(status_parts)
+            cv2.putText(frame, status_text, (12, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 230, 120), 2, cv2.LINE_AA)
 
         target = 1.0 if self.panel_open else 0.0
         self.panel_anim += (target - self.panel_anim) * 0.2
@@ -246,10 +274,27 @@ class HUDManager:
                 
             y += 10
             
-            #* Draw new HUD Toggles
-            self._draw_toggle(frame, x0 + 20, y, "Display Face Labels:", self.show_face_labels, "toggle_show_labels")
+            #* OVERLAYS SECTION
+            cv2.putText(frame, "- Overlays -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
             y += 30
-            self._draw_toggle(frame, x0 + 20, y, "Display Detected Emotion:", self.show_detected_emotion, "toggle_show_emotions")
+            self._draw_toggle(frame, x0 + 20, y, "Display Face Labels:", self.show_face_labels, "toggle_show_labels")
+            y += 30 
+            
+            #! Force the toggle off and gray it out if the model is missing
+            if not self.model_loaded:
+                self.show_detected_emotion = False
+                
+            self._draw_toggle(frame, x0 + 20, y, "Display Detected Emotion:", self.show_detected_emotion, "toggle_show_emotions", disabled=not self.model_loaded)
+            y += 40
+            
+            #* COUNTERS SECTION
+            cv2.putText(frame, "- Display Counters -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
+            y += 30
+            self._draw_toggle(frame, x0 + 20, y, "Face Counter:", self.show_face_counter, "toggle_face_counter")
+            y += 30
+            self._draw_toggle(frame, x0 + 20, y, "Tracker Counter:", self.show_tracker_counter, "toggle_tracker_counter")
+            y += 30
+            self._draw_toggle(frame, x0 + 20, y, "FPS Counter:", self.show_fps_counter, "toggle_fps_counter")
             
         else:
             occ_data = occ_data_list[self.view_tracker_idx]
