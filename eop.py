@@ -258,6 +258,7 @@ def run_require(py_cmd):
     print(f"[NECESSARY] Python Libraries")
     req_path = os.path.join(BASE_DIR, "downloaders", "requirements.txt")
     
+    #? 1. PRINT REQUIREMENTS 
     try:
         with open(req_path, 'r') as f:
             for line in f:
@@ -268,28 +269,31 @@ def run_require(py_cmd):
     except FileNotFoundError:
         print(f"  - {RED}Warning: requirements.txt not found at {req_path}{RESET}")
 
+    #? 2. ASK FOR CONFIRMATION
     choice = input("\nDo you want to install the required Python libraries via pip now? (y/n): ").strip().lower()
     
+    #? 3. EXECUTE ONLY IF 'YES'
     if choice in ['y', 'yes']:
         print(f"{YELLOW}Installing Pip Dependencies...{RESET}")
-        req_path = os.path.join(BASE_DIR, "downloaders", "requirements.txt")
         pip_args = [py_cmd, "-m", "pip", "install", "-r", req_path]
         
-        #! Bypass PEP 668 environment lock on modern Unix systems
+        custom_env = os.environ.copy()
+        
+        #! Apply PEP 668 bypass and RAM-disk fixes ONLY on Unix systems
         if os.name != 'nt':
             pip_args.append("--break-system-packages")
+            custom_env["TMPDIR"] = "/var/tmp"
             
-        result = subprocess.run(pip_args)
+        result = subprocess.run(pip_args, env=custom_env)
         
-        #! If pip fails, halt the entire setup!
+        #! Catch failures with a realistic diagnostic message
         if result.returncode != 0:
             print(f"\n{RED}Critical Error: Failed to install dependencies.{RESET}")
-            print(f"{YELLOW}It looks like 'pip' is not installed on your system.{RESET}")
-            print(f"Please install it using one of the following commands:")
-            print(f"  - {CYAN}Arch Linux:{RESET} sudo pacman -S python-pip")
-            print(f"  - {CYAN}Ubuntu/Debian:{RESET} sudo apt install python3-pip")
+            print(f"{YELLOW}Pip encountered an error. Please check your internet connection and disk space.{RESET}")
+            print(f"If 'pip' is entirely missing from your system, install it via:")
+            print(f"  - {CYAN}Arch:{RESET} sudo pacman -S python-pip")
+            print(f"  - {CYAN}Ubuntu:{RESET} sudo apt install python3-pip")
             print(f"  - {CYAN}macOS:{RESET} python3 -m ensurepip --upgrade")
-            print(f"  - {CYAN}Official Guide:{RESET} https://pip.pypa.io/en/stable/installation/")
             sys.exit(1)
     else:
         print(f"{YELLOW}Skipping pip installation... (The next steps may fail){RESET}")
