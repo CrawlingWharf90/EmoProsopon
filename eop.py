@@ -273,7 +273,13 @@ def run_require(py_cmd):
     if choice in ['y', 'yes']:
         print(f"{YELLOW}Installing Pip Dependencies...{RESET}")
         req_path = os.path.join(BASE_DIR, "downloaders", "requirements.txt")
-        result = subprocess.run([py_cmd, "-m", "pip", "install", "-r", req_path])
+        pip_args = [py_cmd, "-m", "pip", "install", "-r", req_path]
+        
+        #! Bypass PEP 668 environment lock on modern Unix systems
+        if os.name != 'nt':
+            pip_args.append("--break-system-packages")
+            
+        result = subprocess.run(pip_args)
         
         #! If pip fails, halt the entire setup!
         if result.returncode != 0:
