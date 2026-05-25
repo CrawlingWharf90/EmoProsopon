@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import shutil
 import sys
@@ -6,6 +7,7 @@ import json
 import tempfile
 import subprocess
 import time
+import re
 
 #* ─────────────────────────────────────────────────────────────────
 #* CONSTANTS & HELPERS
@@ -16,7 +18,7 @@ RED = '\033[91m'
 CYAN = '\033[96m'
 RESET = '\033[0m'
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.realpath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, '.eop_config')
 VERSION_FILE = os.path.join(BASE_DIR, 'VERSION')
 
@@ -251,6 +253,41 @@ def check_models():
     found = sum(1 for m in required if os.path.exists(os.path.join(models_dir, m)))
     return found
 
+def run_require(py_cmd):
+    clear_screen()
+    print(f"[NECESSARY] Python Libraries")
+    req_path = os.path.join(BASE_DIR, "downloaders", "requirements.txt")
+    
+    try:
+        with open(req_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    lib_name = re.split(r'[=<>~]', line)[0].strip()
+                    print(f"  - {CYAN}{lib_name}{RESET}")
+    except FileNotFoundError:
+        print(f"  - {RED}Warning: requirements.txt not found at {req_path}{RESET}")
+
+    choice = input("\nDo you want to install the required Python libraries via pip now? (y/n): ").strip().lower()
+    
+    if choice in ['y', 'yes']:
+        print(f"{YELLOW}Installing Pip Dependencies...{RESET}")
+        req_path = os.path.join(BASE_DIR, "downloaders", "requirements.txt")
+        result = subprocess.run([py_cmd, "-m", "pip", "install", "-r", req_path])
+        
+        #! If pip fails, halt the entire setup!
+        if result.returncode != 0:
+            print(f"\n{RED}Critical Error: Failed to install dependencies.{RESET}")
+            print(f"{YELLOW}It looks like 'pip' is not installed on your system.{RESET}")
+            print(f"Please install it using one of the following commands:")
+            print(f"  - {CYAN}Arch Linux:{RESET} sudo pacman -S python-pip")
+            print(f"  - {CYAN}Ubuntu/Debian:{RESET} sudo apt install python3-pip")
+            print(f"  - {CYAN}macOS:{RESET} python3 -m ensurepip --upgrade")
+            print(f"  - {CYAN}Official Guide:{RESET} https://pip.pypa.io/en/stable/installation/")
+            sys.exit(1)
+    else:
+        print(f"{YELLOW}Skipping pip installation... (The next steps may fail){RESET}")
+
 def get_dataset_counts():
     dataset_dir = os.path.join(BASE_DIR, 'dataset')
     unpack_dir = os.path.join(BASE_DIR, 'unpkged_datasets')
@@ -358,11 +395,11 @@ def display_help():
 
 def run_tui(target, py_cmd):
     if target == "models":
-        subprocess.run([py_cmd, os.path.join("downloaders", "download_models.py")])
+        subprocess.run([py_cmd, os.path.join(BASE_DIR, "downloaders", "download_models.py")])
     elif target == "datasets":
-        subprocess.run([py_cmd, os.path.join("downloaders", "download_dataset.py")])
+        subprocess.run([py_cmd, os.path.join(BASE_DIR, "downloaders", "download_dataset.py")])
     elif target == "extractor":
-        subprocess.run([py_cmd, os.path.join("downloaders", "extract_and_sort_dataset.py")])
+        subprocess.run([py_cmd, os.path.join(BASE_DIR, "downloaders", "extract_and_sort_dataset.py")])
     else:
         print(f"{RED}Invalid TUI target. Use: models, datasets, or extractor.{RESET}")
 
@@ -371,8 +408,9 @@ def run_setup(py_cmd):
     print(f"{CYAN}--- EMO-PROSOPOPON SETUP WIZARD ---{RESET}\n")
     
     #? 1. Require
-    print(f"[{GREEN}1/3{RESET}] Installing Pip Dependencies...")
-    subprocess.run([py_cmd, "-m", "pip", "install", "-r", os.path.join("downloaders", "requirements.txt")])
+    print(f"[{GREEN}1/3{RESET}] Python Libraries")
+    time.sleep(1)    
+    run_require(py_cmd)
     
     #? 2. Models
     print(f"\n[{GREEN}2/3{RESET}] Launching Model Manager...")
@@ -384,7 +422,7 @@ def run_setup(py_cmd):
     print(f"[{GREEN}3/3{RESET}] Training Data")
     choice = input(f"\nDo you want to download and extract datasets for training now? (y/n): ").strip().lower()
     
-    if choice == 'y' or choice == 'yes':
+    if choice in ['y', 'yes']:
         run_tui("datasets", py_cmd)
         run_tui("extractor", py_cmd)
         
@@ -393,9 +431,8 @@ def run_setup(py_cmd):
     print_status(py_cmd)
     time.sleep(2)
     
-    # Run Start
     check_launch_requirements(py_cmd)
-    subprocess.run([py_cmd, os.path.join("emoprosopon", "mainmenu.py")])
+    subprocess.run([py_cmd, os.path.join(BASE_DIR, "emoprosopon", "mainmenu.py")])
 
 #* ─────────────────────────────────────────────────────────────────
 #* MAIN PARSER
@@ -410,11 +447,10 @@ def main():
 
     if command in ['--start', '-s']:
         check_launch_requirements(py_cmd)
-        subprocess.run([py_cmd, os.path.join("emoprosopon", "mainmenu.py")])
+        subprocess.run([py_cmd, os.path.join(BASE_DIR, "emoprosopon", "mainmenu.py")])
 
     elif command in ['--require', '-r']:
-        print(f"{CYAN}Installing requirements via pip...{RESET}")
-        subprocess.run([py_cmd, "-m", "pip", "install", "-r", os.path.join("downloaders", "requirements.txt")])
+        run_require(py_cmd)
 
     elif command in ['--tui', '-t']:
         if len(sys.argv) < 3:
@@ -434,10 +470,10 @@ def main():
             return
         if sub_cmd in ["all", "harvest"]:
             print(f"{CYAN}Running Harvester...{RESET}")
-            subprocess.run([py_cmd, os.path.join("trainers", "harvest_dataset.py")])
+            subprocess.run([py_cmd, os.path.join(BASE_DIR, "trainers", "harvest_dataset.py")])
         if sub_cmd in ["all", "model"]:
             print(f"{CYAN}Running LSTM Trainer...{RESET}")
-            subprocess.run([py_cmd, os.path.join("trainers", "train_emotion_model.py")])
+            subprocess.run([py_cmd, os.path.join(BASE_DIR, "trainers", "train_emotion_model.py")])
 
     elif command in ['--update', '-u']:
         run_update()
