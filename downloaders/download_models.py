@@ -51,6 +51,11 @@ MODELS = {
         "file": "selfie_multiclass_256x256.tflite",
         "url": "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_multiclass_256x256/float32/latest/selfie_multiclass_256x256.tflite",
         "desc": "Background/hair segmenter for dense occlusion."
+    },
+    "MobileNetV2 Feature Extractor": {
+        "file": "mobilenet_v2-b0353104.pth",
+        "url": "https://download.pytorch.org/models/mobilenet_v2-b0353104.pth",
+        "desc": "Pre-trained CNN backbone for static emotion embeddings."
     }
 }
 

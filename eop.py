@@ -23,6 +23,59 @@ CONFIG_FILE = os.path.join(BASE_DIR, '.eop_config')
 VERSION_FILE = os.path.join(BASE_DIR, 'VERSION')
 
 #* ─────────────────────────────────────────────────────────────────
+#* SCALABLE COMMAND TREE & HELP ROUTER
+#* ─────────────────────────────────────────────────────────────────
+class CmdNode:
+    def __init__(self, flags, desc, args_help=None, sub_nodes=None):
+        self.flags = flags             # List of strings: ['--tui', '-t']
+        self.desc = desc               # Description string
+        self.args_help = args_help or [] # List of expected trailing arguments
+        self.sub_nodes = sub_nodes or [] # List of child CmdNodes
+
+#? THE GLOBAL REGISTRY: Add new commands here and they auto-generate in the help menu!
+COMMAND_TREE = [
+    CmdNode(["--start", "-s"], "Launch the EmoProsopon Main Engine.", sub_nodes=[
+        CmdNode(["live"], "Bypass the GUI and launch directly into live camera tracking."),
+        CmdNode(["video"], "Bypass the GUI and run the tracker on a pre-recorded video file.", args_help=[
+            "forward=True/False : If False, closes the app when the video ends (Default: True).",
+            "path=\"/path/file\"  : Directly load this file (Skips the OS file picker)."
+        ]),
+        CmdNode(["screen"], "Bypass the GUI and capture a specific monitor for analysis.", args_help=[
+            "<index> : The numerical ID of the monitor (e.g., 1, 2)."
+        ])
+    ]),
+    CmdNode(["--tui", "-t"], "Launch a specific Terminal User Interface (TUI) tool.", sub_nodes=[
+        CmdNode(["models"], "Manage Core AI weights (YuNet, MediaPipe, MobileNetV2...)."),
+        CmdNode(["datasets"], "Browse and download research image/video databases."),
+        CmdNode(["extractor"], "Unzip and normalize raw datasets into the /sorted_datasets directory.")
+    ]),
+    CmdNode(["--train", "-n"], "Execute the Machine Learning pipeline.", sub_nodes=[
+        CmdNode(["all"], "(Default) Run harvester, then immediately train the models.", args_help=[
+            "-s / --static    : Process and train only Image datasets (StaticMLP).",
+            "-k / --kinematic : Process and train only Video datasets (KinematicLSTM).",
+            "-b / --both      : Process and train both data streams sequentially (Default)."
+        ]),
+        CmdNode(["harvest"], "Extract kinematics & embeddings into .npy arrays.", args_help=[
+            "-s / --static    : Process only Image datasets.",
+            "-k / --kinematic : Process only Video datasets.",
+            "-b / --both      : Process both data streams (Default)."
+        ]),
+        CmdNode(["model"], "Train the neural networks on the extracted .npy arrays.", args_help=[
+            "-s / --static    : Train only the StaticMLP.",
+            "-k / --kinematic : Train only the KinematicLSTM.",
+            "-b / --both      : Train both models sequentially (Default)."
+        ])
+    ]),
+    CmdNode(["--setup", "-g"], "Run the first-time setup wizard."),
+    CmdNode(["--require", "-r"], "Install Python dependencies."),
+    CmdNode(["--update", "-u"], "Check for and apply the latest updates."),
+    CmdNode(["--uninstall", "-un"], "Launch the uninstaller GUI."),
+    CmdNode(["--installer", "-i"], "Open the installer GUI."),
+    CmdNode(["--version", "-v"], "Show installed version."),
+    CmdNode(["--change-python", "-cp"], "Reconfigure Python interpreter.")
+]
+
+#* ─────────────────────────────────────────────────────────────────
 #* INSTALLER AND HELPER FUNCTIONS
 #* ───────────────────────────────────────────────────────────────── 
 def get_version():
@@ -348,70 +401,52 @@ def check_launch_requirements(py_cmd):
 #* ─────────────────────────────────────────────────────────────────
 #* COMMAND ROUTING
 #* ─────────────────────────────────────────────────────────────────
-def display_help():
-    print(f"\n{CYAN}EmoProsopopon CLI Commands (eop){RESET}")
-    print("=" * 72)
+def display_help(args_path=None):
+    args_path = args_path or []
 
-    print(f"{GREEN}eop --start (-s){RESET}")
-    print("    Launch the main engine")
+    if not args_path:
+        print(f"\n{CYAN}EmoProsopopon CLI Commands (eop){RESET}")
+        print("=" * 72)
+        for node in COMMAND_TREE:
+            flags_str = f"{GREEN}{', '.join(node.flags)}{RESET}"
+            print(f"{flags_str}")
+            print(f"    {node.desc}")
+        print("=" * 72)
+        print(f"{CYAN}Tip:{RESET} Type 'eop <command> -h' for sub-commands and details.\n")
+        return
 
-    print(f"{GREEN}eop --setup (-g){RESET}")
-    print("    Run the first-time setup wizard")
+    current_nodes = COMMAND_TREE
+    target_node = None
+    path_taken = []
 
-    print(f"{GREEN}eop --require (-r){RESET}")
-    print("    Install Python dependencies")
+    for arg in args_path:
+        found = False
+        for node in current_nodes:
+            if arg in node.flags:
+                target_node = node
+                current_nodes = node.sub_nodes
+                path_taken.append(node.flags[0]) # Save primary flag for breadcrumbs
+                found = True
+                break
+        if not found:
+            print(f"\n{RED}Error: Unknown command layer '{arg}'.{RESET}")
+            break #! Stop digging (IYBT) if they typed gibberish
 
-    print(f"{GREEN}eop --tui <models|datasets|extractor> (-t){RESET}")
-    print("    Open an interactive TUI manager")
-
-    print(f"{GREEN}eop --train [all|harvest|model] (-n){RESET}")
-    print("    Run ML training pipeline")
-
-    print(f"{GREEN}eop --update (-u){RESET}")
-    print("    Check for and apply the latest updates")
-
-    print(f"{GREEN}eop --uninstall (-un){RESET}")
-    print("    Launch the uninstaller GUI")
-
-    print(f"{GREEN}eop --installer (-i){RESET}")
-    print("    Open the installer GUI")
-
-    print(f"{GREEN}eop --version (-v){RESET}")
-    print("    Show installed version")
-
-    print(f"{GREEN}eop --change-python (-cp){RESET}")
-    print("    Reconfigure Python interpreter")
-
-    print("-" * 72)
-
-    print(f"{YELLOW}Advanced Commands{RESET}")
-
-    print(f"{GREEN}eop --models --auto{RESET}")
-    print("    Download all missing models")
-
-    print(f"{GREEN}eop --datasets <list>{RESET}")
-    print("    Download datasets (comma separated)")
-
-    print(f"{GREEN}eop --extractor --extract <list>{RESET}")
-    print("    Extract datasets")
-
-    print(f"{GREEN}eop --extractor --sort <list>{RESET}")
-    print("    Sort datasets")
-
-    print(f"{GREEN}eop --extractor --syd <list>{RESET}")
-    print("    Extract and sort datasets")
-
-    print(f"{GREEN}eop --start live{RESET}")
-    print("    Start the engine with live camera input")
-
-    print(f"{GREEN}eop --start video [forward=True/False] [path=\"...\"]{RESET}")
-    print("    Bypass the menu and analyze a video file.")
-    print("      - forward: If False, quits the app when the video ends (Default: True)")
-    print("      - path: Direct path to the video file (Skips the OS file picker)")
-
-    print(f"{GREEN}eop --start screen <index>{RESET}")
-    print("    Bypass the menu and capture a specific monitor (e.g., eop -s screen 1)")
-    print("=" * 72 + "\n")
+    if target_node:
+        cmd_string = f"eop {' '.join(path_taken)}"
+        print(f"\n{CYAN}Command: {cmd_string}{RESET}")
+        print(f"  {target_node.desc}")
+        
+        if target_node.args_help:
+            print(f"\n{YELLOW}Arguments:{RESET}")
+            for arg_desc in target_node.args_help:
+                print(f"  {GREEN}{arg_desc}{RESET}")
+                
+        if target_node.sub_nodes:
+            print(f"\n{YELLOW}Sub-commands:{RESET}")
+            for sub in target_node.sub_nodes:
+                print(f"  {GREEN}{', '.join(sub.flags):<10}{RESET} : {sub.desc}")
+        print("")
 
 def run_tui(target, py_cmd):
     if target == "models":
@@ -458,7 +493,12 @@ def run_setup(py_cmd):
 #* MAIN PARSER
 #* ─────────────────────────────────────────────────────────────────
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] in ['-h', '--help']:
+    if '-h' in sys.argv or '--help' in sys.argv:
+        clean_args = [arg.lower() for arg in sys.argv[1:] if arg not in ['-h', '--help']]
+        display_help(clean_args)
+        sys.exit(0)
+
+    if len(sys.argv) < 2:
         display_help()
         sys.exit(0)
 
@@ -484,17 +524,37 @@ def main():
         run_setup(py_cmd)
 
     elif command in ['--train', '-n']:
-        valid = ['all', 'harvest', 'model']
-        sub_cmd = sys.argv[2].lower() if len(sys.argv) > 2 else "all"
-        if sub_cmd not in valid:
-            print(f"{RED}Invalid training target. Use: all, harvest, or model.{RESET}")
-            return
-        if sub_cmd in ["all", "harvest"]:
-            print(f"{CYAN}Running Harvester...{RESET}")
-            subprocess.run([py_cmd, os.path.join(BASE_DIR, "trainers", "harvest_dataset.py")])
-        if sub_cmd in ["all", "model"]:
-            print(f"{CYAN}Running LSTM Trainer...{RESET}")
-            subprocess.run([py_cmd, os.path.join(BASE_DIR, "trainers", "train_emotion_model.py")])
+        valid_targets = ['all', 'harvest', 'model']
+        target = "all"
+        modality = "--both"
+        unknown_args = []
+        
+        for arg in sys.argv[2:]:
+            arg_lower = arg.lower()
+            if arg_lower in valid_targets:
+                target = arg_lower
+            elif arg_lower in ['-s', '--static']:
+                modality = "--static"
+            elif arg_lower in ['-k', '--kinematic']:
+                modality = "--kinematic"
+            elif arg_lower in ['-b', '-a', '--both', '--all']:
+                modality = "--both"
+            else:
+                unknown_args.append(arg)
+                
+        if unknown_args:
+            print(f"{RED}Error: Unknown argument(s) for --train: {', '.join(unknown_args)}{RESET}")
+            print(f"{YELLOW}Valid targets:{RESET} all, harvest, model")
+            print(f"{YELLOW}Valid modalities:{RESET} -s (static), -k (kinematic), -b (both)")
+            sys.exit(1)
+                
+        if target in ["all", "harvest"]:
+            print(f"{CYAN}Running Harvester ({modality.replace('--', '')})...{RESET}")
+            subprocess.run([py_cmd, os.path.join(BASE_DIR, "trainers", "harvest_dataset.py"), modality])
+            
+        if target in ["all", "model"]:
+            print(f"{CYAN}Running Trainer ({modality.replace('--', '')})...{RESET}")
+            subprocess.run([py_cmd, os.path.join(BASE_DIR, "trainers", "train_emotion_model.py"), modality])
 
     elif command in ['--update', '-u']:
         run_update()
@@ -509,7 +569,7 @@ def main():
         version = get_version()
         print(f"\nEmoProsopon Version: {GREEN}{version}{RESET}\n")
 
-    elif command in ['--change-python', '-cp']:
+    elif command in ['--change-python', '-cp']: #! Don't abreviate change-python (ಠಿ_ಠ)
         config = get_config()
         config.pop('python_cmd', None)
         save_config(config)
