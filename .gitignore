@@ -4,6 +4,7 @@
 
 #? 1. Local Configuration & Settings
 .eop_config
+.json
 .vscode/
 .idea/
 

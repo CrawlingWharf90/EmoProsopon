@@ -1,32 +1,41 @@
 import cv2
 import time
+import os
+import json
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+CONFIG_FILE = os.path.join(BASE_DIR, '.eop_config')
 
 class HUDManager:
     def __init__(self, regions):
         self.panel_open = False
         self.panel_anim = 0.0
-        self.panel_width = 350 
-        self.tabs = ["Occlusion", "Kinematics", "Settings"]
+        self.panel_width = 440 #! Widened to fit 4 tabs
+        self.tabs = ["Occlusion", "Kinematics", "Static", "Settings"]
         self.active_tab = "Kinematics"
         self.regions = regions
         
-        self.max_trackers = 1            
         self.view_tracker_idx = 0        
         self.assignments = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4} 
         
         self.click_zones = [] 
         self.next_click_zones = []
         
-        #* TOGGLES
+        #* DEFAULT CONFIGURATION
+        self.max_trackers = 1            
+        self.track_kinematics = True
+        self.track_static = True
         self.show_face_labels = True
         self.show_detected_emotion = True
-        self.model_loaded = False 
-
-        #* COUNTER TOGGLES
         self.show_face_counter = True
         self.show_tracker_counter = True
         self.show_fps_counter = True
-    
+        self.show_confidence_counter = True
+        
+        #* OVERWRITE WITH SAVED CONFIG
+        self.load_config()
+
+        self.model_loaded = False 
         self.last_detected_count = 0 
         
         self.region_colors = {
@@ -47,28 +56,105 @@ class HUDManager:
         self.ESC_WAIT_S = 0.65
         self.ESC_FILL_S = 1.35
 
+    def load_config(self):
+        """Loads settings from .eop_config if they exist."""
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
+                    settings = config.get("hud_settings", {})
+                    
+                    self.max_trackers = settings.get("max_trackers", self.max_trackers)
+                    self.track_kinematics = settings.get("track_kinematics", self.track_kinematics)
+                    self.track_static = settings.get("track_static", self.track_static)
+                    self.show_face_labels = settings.get("show_face_labels", self.show_face_labels)
+                    self.show_detected_emotion = settings.get("show_detected_emotion", self.show_detected_emotion)
+                    self.show_face_counter = settings.get("show_face_counter", self.show_face_counter)
+                    self.show_tracker_counter = settings.get("show_tracker_counter", self.show_tracker_counter)
+                    self.show_fps_counter = settings.get("show_fps_counter", self.show_fps_counter)
+                    self.show_confidence_counter = settings.get("show_confidence_counter", self.show_confidence_counter)
+            except Exception as e:
+                print(f"Warning: Failed to load HUD settings from config: {e}")
+
+    def save_config(self):
+        """Saves current settings into .eop_config without erasing python_cmd."""
+        config = {}
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
+            except Exception:
+                pass 
+
+        config["hud_settings"] = {
+            "max_trackers": self.max_trackers,
+            "track_kinematics": self.track_kinematics,
+            "track_static": self.track_static,
+            "show_face_labels": self.show_face_labels,
+            "show_detected_emotion": self.show_detected_emotion,
+            "show_face_counter": self.show_face_counter,
+            "show_tracker_counter": self.show_tracker_counter,
+            "show_fps_counter": self.show_fps_counter,
+            "show_confidence_counter": self.show_confidence_counter
+        }
+
+        try:
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(config, f, indent=4)
+        except Exception as e:
+            print(f"Warning: Failed to save HUD settings: {e}")
+
     def handle_click(self, x, y):
         for (x1, y1, x2, y2, action, param) in self.click_zones:
             if x1 <= x <= x2 and y1 <= y <= y2:
-                if action == "open_panel":
-                    self.panel_open = True
-                elif action == "set_tab":
-                    self.active_tab = param
-                elif action == "set_subtab":
-                    self.view_tracker_idx = param
-                elif action == "close_panel":
-                    self.panel_open = False
-                elif action == "toggle_show_labels":
+                needs_save = False
+                
+                #? UI Navigation (No save needed)
+                if action == "open_panel": self.panel_open = True
+                elif action == "set_tab": self.active_tab = param
+                elif action == "set_subtab": self.view_tracker_idx = param
+                elif action == "close_panel": self.panel_open = False
+                elif action == "adj_assign":
+                    t_idx, direction = param
+                    if self.last_detected_count <= 0:
+                        self.assignments[t_idx] = 0
+                    else:
+                        active_other = [self.assignments[i] for i in range(self.max_trackers) if i != t_idx]
+                        current = self.assignments[t_idx]
+                        if current >= self.last_detected_count:
+                            current = -1 if direction == 1 else self.last_detected_count
+                        for _ in range(self.last_detected_count):
+                            current = (current + direction) % self.last_detected_count
+                            if current not in active_other:
+                                self.assignments[t_idx] = current
+                                break
+                
+                #? Toggles & Adjustments (Require Save)
+                elif action == "toggle_track_kinematics": 
+                    self.track_kinematics = not self.track_kinematics
+                    needs_save = True
+                elif action == "toggle_track_static": 
+                    self.track_static = not self.track_static
+                    needs_save = True
+                elif action == "toggle_show_labels": 
                     self.show_face_labels = not self.show_face_labels
+                    needs_save = True
                 elif action == "toggle_show_emotions":
-                    if self.model_loaded:
+                    if self.model_loaded: 
                         self.show_detected_emotion = not self.show_detected_emotion
-                elif action == "toggle_face_counter":
+                        needs_save = True
+                elif action == "toggle_face_counter": 
                     self.show_face_counter = not self.show_face_counter
-                elif action == "toggle_tracker_counter":
+                    needs_save = True
+                elif action == "toggle_tracker_counter": 
                     self.show_tracker_counter = not self.show_tracker_counter
-                elif action == "toggle_fps_counter":
+                    needs_save = True
+                elif action == "toggle_fps_counter": 
                     self.show_fps_counter = not self.show_fps_counter
+                    needs_save = True
+                elif action == "toggle_confidence_counter": 
+                    self.show_confidence_counter = not self.show_confidence_counter
+                    needs_save = True
                 elif action == "adj_max":
                     new_max = max(1, min(5, self.max_trackers + param))
                     if new_max > self.max_trackers:
@@ -80,30 +166,17 @@ class HUDManager:
                     self.max_trackers = new_max
                     if self.view_tracker_idx >= self.max_trackers:
                         self.view_tracker_idx = self.max_trackers - 1
-                elif action == "adj_assign":
-                    t_idx, direction = param
-                    if self.last_detected_count <= 0:
-                        self.assignments[t_idx] = 0
-                    else:
-                        active_other = [self.assignments[i] for i in range(self.max_trackers) if i != t_idx]
-                        current = self.assignments[t_idx]
-                        
-                        if current >= self.last_detected_count:
-                            current = -1 if direction == 1 else self.last_detected_count
-                            
-                        for _ in range(self.last_detected_count):
-                            current = (current + direction) % self.last_detected_count
-                            if current not in active_other:
-                                self.assignments[t_idx] = current
-                                break
+                    needs_save = True
+                
+                if needs_save:
+                    self.save_config()
                 return 
 
     def handle_input(self, key):
         now = time.time()
         should_quit = False
         
-        if key == 8 or key == 113: 
-            should_quit = True
+        if key == 8 or key == 113: should_quit = True
         
         if key == 27:
             self.esc_last_seen_t = now
@@ -119,8 +192,7 @@ class HUDManager:
                 self.esc_fill_t = now
             elif self.esc_state == 'filling':
                 fill_ratio = min((now - self.esc_fill_t) / self.ESC_FILL_S, 1.0)
-                if fill_ratio >= 1.0:
-                    should_quit = True
+                if fill_ratio >= 1.0: should_quit = True
         else:
             if self.esc_state == 'waiting':
                 self.panel_open = not self.panel_open
@@ -131,7 +203,8 @@ class HUDManager:
         if self.panel_open:
             if key == ord('1'): self.active_tab = "Occlusion"
             if key == ord('2'): self.active_tab = "Kinematics"
-            if key == ord('3'): self.active_tab = "Settings"
+            if key == ord('3'): self.active_tab = "Static"
+            if key == ord('4'): self.active_tab = "Settings"
         
         return should_quit
 
@@ -178,7 +251,6 @@ class HUDManager:
             self._add_zone(cx - 40, cy - 40, 80, 80, "close_panel")
 
     def _draw_toggle(self, frame, x, y, label, is_on, action_name, disabled=False):
-        """Helper to draw clean UI switches with disabled states"""
         txt_col = (100, 100, 100) if disabled else (200, 200, 200)
         cv2.putText(frame, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, txt_col, 1)
         radius = 9
@@ -203,10 +275,11 @@ class HUDManager:
         if not disabled:
             self._add_zone(pill_x - 20, pill_y - 20, pill_w + 40, 40, action_name)
 
-    def draw(self, frame, h, w, fps, occ_data_list, kin_data_list, detected_count):
+    def draw(self, frame, h, w, fps, occ_data_list, kin_data_list, detected_count, kin_preds_list, static_preds_list, global_fused_dict):
         self.last_detected_count = detected_count 
         self.next_click_zones = [] 
         
+        #* STATUS BAR (TOP LEFT)
         status_parts = []
         if self.show_face_counter:
             status_parts.append(f"Detected Faces: {detected_count}")
@@ -214,6 +287,13 @@ class HUDManager:
             status_parts.append(f"Trackers Active: {self.max_trackers}")
         if self.show_fps_counter:
             status_parts.append(f"FPS: {int(fps)}")
+        if self.show_confidence_counter:
+            primary_face_id = self.assignments.get(0, 0)
+            if primary_face_id in global_fused_dict:
+                conf = global_fused_dict[primary_face_id][1]
+                status_parts.append(f"Confidence: {conf:.1f}%")
+            else:
+                status_parts.append(f"Confidence: Scanning")
             
         if status_parts:
             status_text = " | ".join(status_parts)
@@ -234,15 +314,17 @@ class HUDManager:
         cv2.rectangle(overlay, (x0, 0), (w, h), (18, 18, 30), -1)
         cv2.addWeighted(overlay, 0.9, frame, 0.1, 0, frame)
 
+        #* DRAW TABS (Now 4 tabs)
         y_tab = 30
         for i, tab in enumerate(self.tabs):
             col = (200, 200, 255) if self.active_tab == tab else (80, 80, 100)
             txt = f"[{i+1}] {tab}"
-            cv2.putText(frame, txt, (x0 + 20 + (i*105), y_tab), cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1, cv2.LINE_AA)
-            self._add_zone(x0 + 10 + (i*105), y_tab - 20, 95, 30, "set_tab", tab)
+            cv2.putText(frame, txt, (x0 + 15 + (i*100), y_tab), cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1, cv2.LINE_AA)
+            self._add_zone(x0 + 5 + (i*100), y_tab - 20, 95, 30, "set_tab", tab)
 
         y = 60
-        if self.active_tab in ["Occlusion", "Kinematics"] and self.max_trackers > 1:
+        #* DRAW TRACKER SUBTABS
+        if self.active_tab in ["Occlusion", "Kinematics", "Static"] and self.max_trackers > 1:
             for i in range(self.max_trackers):
                 col = (0, 255, 150) if self.view_tracker_idx == i else (80, 80, 100)
                 cx_tab = x0 + 20 + (i*50)
@@ -250,6 +332,7 @@ class HUDManager:
                 self._add_zone(cx_tab - 5, y - 20, 50, 30, "set_subtab", i)
             y += 30
 
+        #* TAB: SETTINGS
         if self.active_tab == "Settings":
             cv2.putText(frame, "Max Tracked Faces:", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200,200,200), 1)
             cv2.putText(frame, "<", (x0 + 200, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,200), 2)
@@ -257,7 +340,6 @@ class HUDManager:
             cv2.putText(frame, ">", (x0 + 260, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,200), 2)
             self._add_zone(x0 + 180, y - 20, 40, 35, "adj_max", -1)
             self._add_zone(x0 + 250, y - 20, 40, 35, "adj_max", 1)
-            
             y += 40 
 
             cv2.putText(frame, "- Face Assignments -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
@@ -274,16 +356,21 @@ class HUDManager:
                 
             y += 10
             
+            #* TRACKING TYPE SECTION
+            cv2.putText(frame, "- Tracking Type -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
+            y += 30
+            self._draw_toggle(frame, x0 + 20, y, "Track Kinematics (LSTM):", self.track_kinematics, "toggle_track_kinematics")
+            y += 30 
+            self._draw_toggle(frame, x0 + 20, y, "Track Static (CNN):", self.track_static, "toggle_track_static")
+            y += 40
+            
             #* OVERLAYS SECTION
             cv2.putText(frame, "- Overlays -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
             y += 30
             self._draw_toggle(frame, x0 + 20, y, "Display Face Labels:", self.show_face_labels, "toggle_show_labels")
             y += 30 
             
-            #! Force the toggle off and gray it out if the model is missing
-            if not self.model_loaded:
-                self.show_detected_emotion = False
-                
+            if not self.model_loaded: self.show_detected_emotion = False
             self._draw_toggle(frame, x0 + 20, y, "Display Detected Emotion:", self.show_detected_emotion, "toggle_show_emotions", disabled=not self.model_loaded)
             y += 40
             
@@ -295,7 +382,35 @@ class HUDManager:
             self._draw_toggle(frame, x0 + 20, y, "Tracker Counter:", self.show_tracker_counter, "toggle_tracker_counter")
             y += 30
             self._draw_toggle(frame, x0 + 20, y, "FPS Counter:", self.show_fps_counter, "toggle_fps_counter")
+            y += 30
+            self._draw_toggle(frame, x0 + 20, y, "Confidence Counter:", self.show_confidence_counter, "toggle_confidence_counter")
             
+        #* TAB: STATIC ANALYSIS
+        elif self.active_tab == "Static":
+            s_emo, s_conf = static_preds_list[self.view_tracker_idx]
+            
+            cv2.putText(frame, "Static Texture Analysis Engine", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+            y += 35
+            
+            cv2.putText(frame, "Model Status:", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
+            status_col = (0, 255, 100) if self.track_static and self.model_loaded else (80, 80, 255)
+            status_txt = "ACTIVE" if self.track_static and self.model_loaded else "DISABLED / MISSING"
+            cv2.putText(frame, status_txt, (x0 + 130, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, status_col, 1)
+            y += 25
+            
+            cv2.putText(frame, "Architecture:  MobileNetV2 (CNN)", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
+            y += 25
+            cv2.putText(frame, "Input Shape:   256x256 RGB", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
+            y += 25
+            cv2.putText(frame, "Output Layer:  64-D Embedding Vector", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
+            y += 45
+            
+            cv2.putText(frame, "- Network Prediction -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
+            y += 30
+            cv2.putText(frame, f"{s_emo}", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
+            cv2.putText(frame, f"Conf: {s_conf:.1f}%", (x0 + 20, y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 200), 1)
+
+        #* TABS: KINEMATICS & OCCLUSION
         else:
             occ_data = occ_data_list[self.view_tracker_idx]
             kin_data = kin_data_list[self.view_tracker_idx]
@@ -320,14 +435,19 @@ class HUDManager:
                             val = kin_data.get(name, 0.0)
                             abs_val = min(abs(val), 1.0)
                             bar_w = int((pw - 100) * abs_val)
-                            
                             bar_color = (0, 255, 0) if val >= 0 else (0, 255, 255)
-                            
                             cv2.rectangle(frame, (x0 + 20, y+2), (x0 + 20 + bar_w, y+5), bar_color, -1)
                             cv2.putText(frame, f"{name}: {val:.3f}", (x0 + 20, y-2), 
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1, cv2.LINE_AA)
                 y += 25
-                if y > h - 50: break
+                if y > h - 100: break
+                
+            #* Add Kinematic Output to Bottom of Tab
+            if self.active_tab == "Kinematics":
+                k_emo, k_conf = kin_preds_list[self.view_tracker_idx]
+                col = (0, 255, 100) if self.track_kinematics else (100, 100, 100)
+                y = h - 60
+                cv2.putText(frame, f"Kinematic Emotion: {k_emo} ({k_conf:.1f}%)", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1, cv2.LINE_AA)
 
         self._draw_bento_icon(frame, h, w)
         

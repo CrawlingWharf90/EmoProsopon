@@ -1,19 +1,55 @@
+import os
+import sys
+import logging
+
+#* ─────────────────────────────────────────────────────────────────
+#* MUTE C++ TENSORFLOW, GLOG, & ABSEIL WARNINGS
+#* ─────────────────────────────────────────────────────────────────
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
+os.environ['GLOG_minloglevel'] = '3'
+os.environ['GRPC_VERBOSITY'] = 'NONE'
+os.environ['ABSL_MINLOGLEVEL'] = '3'
+os.environ['ABSL_MIN_LOG_LEVEL'] = '3'
+
+logging.getLogger('absl').setLevel(logging.ERROR)
+
+#* ─────────────────────────────────────────────────────────────────
+#* DEVELOPER SETTINGS
+#* ─────────────────────────────────────────────────────────────────
+SILENT_MODE = True  #! Set to False to enable developer console logs
+
+def dev_print(*args, **kwargs):
+    """Custom print function that respects SILENT_MODE."""
+    if not SILENT_MODE:
+        print(*args, **kwargs)
+
+#* ─────────────────────────────────────────────────────────────────
+#* THE NUCLEAR OPTION: C-LEVEL STDERR SILENCER
+#* ─────────────────────────────────────────────────────────────────
+class SuppressStderr:
+    def __enter__(self):
+        self.null_fd = os.open(os.devnull, os.O_RDWR)
+        self.save_fd = os.dup(2) 
+        os.dup2(self.null_fd, 2) 
+    def __exit__(self, *_):
+        os.dup2(self.save_fd, 2) 
+        os.close(self.null_fd)
+        os.close(self.save_fd)
+
 import cv2
 import mediapipe as mp
 import time
 import threading
 import numpy as np
 import torch 
-import os
-import sys
 
-#? Dynamically find the project root so we can access models, checkpoints, and trainers
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(BASE_DIR)
 
 from kinematics import KinematicManager
 from HUD import HUDManager
-from trainers.train_emotion_model import EmotionLSTM 
+from emoprosopon.fusion_engine import EmotionFusionEngine
+from static_cnn import StaticFeatureExtractor, get_face_transform
 
 #* ─────────────────────────────────────────────────────────────────
 #* MediaPipe & Configuration
@@ -35,7 +71,6 @@ segmenter_options = mp.tasks.vision.ImageSegmenterOptions(
 panic_mode = False
 model_loaded = False
 
-#* Order must strictly match the harvester script for the neural network!
 FEATURE_ORDER = [
     "Right Eyebrow", "Left Eyebrow", "Right Eye", "Left Eye", 
     "Right Iris", "Left Iris", "Nose Bridge", "Nose Tip", 
@@ -93,7 +128,7 @@ class GlobalLandmark:
         self.x = x; self.y = y; self.z = z
 
 #* ─────────────────────────────────────────────────────────────────
-#*  Main Engine Logic
+#* Main Engine Logic
 #* ─────────────────────────────────────────────────────────────────
 def run_tracker(source_type="camera", source_val=0):
     global app_running, current_mp_image, landmark_histories, model_loaded, panic_mode
@@ -112,61 +147,74 @@ def run_tracker(source_type="camera", source_val=0):
     kinematics_engines = [KinematicManager(FACE_REGIONS.keys()) for _ in range(MAX_POSSIBLE_TRACKERS)]
 
     #* ─────────────────────────────────────────────────────────────
-    #* LOAD THE AI BRAIN
+    #* LOAD THE SPATIO-TEMPORAL AI BRAIN
     #* ─────────────────────────────────────────────────────────────
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    emo_model = EmotionLSTM(input_size=15, hidden_size=64, num_layers=2, num_classes=7).to(device)
+    
+    fusion_engine = None
+    static_cnn = None
+    face_transform = None
     
     try:
-        emo_model.load_state_dict(torch.load(os.path.join(BASE_DIR, 'checkpoints', 'best_emo_model.pth'), map_location=device))
-        emo_model.eval()
-        model_loaded = True #! Set to True only if successful
-        print("✅ Emotion Neural Network loaded successfully!")
+        fusion_engine = EmotionFusionEngine(device=device.type)
+        static_cnn = StaticFeatureExtractor(embedding_size=64).to(device)
+        static_cnn.eval()
+        face_transform = get_face_transform()
+        
+        model_loaded = True 
+        dev_print(f"✅ Two-Stream Fusion Engine loaded successfully on {device}!")
     except Exception as e:
-        print(f"⚠️ Could not load trained model: {e}")
-        print(f"⚠️ Predictions are disabled. Run 'eop train' to generate the model!")
+        dev_print(f"⚠️ Could not load trained models: {e}")
+        dev_print(f"⚠️ Predictions are disabled. Run 'eop -n all -b' to train both networks!")
 
     if not panic_mode:
-        hud.model_loaded = model_loaded #! Inform the HUD about the model status
+        hud.model_loaded = model_loaded 
 
-    EMOTION_MAP_REV = {0: "Neutral", 1: "Happy", 2: "Sad", 3: "Angry", 4: "Fear", 5: "Surprise", 6: "Disgust"}
+    EMOTION_MAP_REV = {-1: "Scanning", 0: "Neutral", 1: "Happy", 2: "Sad", 3: "Angry", 4: "Fear", 5: "Surprise", 6: "Disgust"}
     
-    #! Each tracker needs its own 30-frame rolling window buffer
     sequence_buffers = {i: [] for i in range(MAX_POSSIBLE_TRACKERS)}
-    current_emotions = {} #! Maps stable_id -> Strings
-
+    
     cap = None
     sct = None
     monitor = None
 
-    if source_type in ["camera", "video"]:
+    if source_type in ["camera", "video"]: 
         cap = cv2.VideoCapture(source_val)
+        if not cap.isOpened():
+            # Critical errors still print regardless of SILENT_MODE so the user knows why it crashed
+            print(f"\n❌ CRITICAL: Could not read from camera index {source_val}.")
+            print("Troubleshooting:")
+            print("1. Is another application (Zoom, OBS, Discord) currently using your webcam?")
+            print("2. Windows Privacy: Go to Settings -> Privacy & security -> Camera -> Enable 'Let desktop apps access your camera'.")
+            sys.exit(1)
+            
     elif source_type == "screen":
         import mss
         sct = mss.MSS() 
         monitor = sct.monitors[source_val]
 
     cv2.namedWindow('EmoProsopopon', cv2.WINDOW_AUTOSIZE)
-
     tracker_lms = []
-    for _ in range(MAX_POSSIBLE_TRACKERS):
-        t_options = mp.tasks.vision.FaceLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=os.path.join(BASE_DIR, 'models', 'face_landmarker.task')),
-            running_mode=VisionRunningMode.VIDEO, 
-            num_faces=1, 
-            min_face_detection_confidence=0.1, 
-            min_face_presence_confidence=0.1,
-            min_tracking_confidence=0.1
-        )
-        tracker_lms.append(mp.tasks.vision.FaceLandmarker.create_from_options(t_options))
 
-    hand_lm = mp.tasks.vision.HandLandmarker.create_from_options(hand_options)
-    segmenter = mp.tasks.vision.ImageSegmenter.create_from_options(segmenter_options)
+    #* Mute the C++ backend while loading the models into RAM
+    with SuppressStderr():
+        for _ in range(MAX_POSSIBLE_TRACKERS):
+            t_options = mp.tasks.vision.FaceLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=os.path.join(BASE_DIR, 'models', 'face_landmarker.task')),
+                running_mode=VisionRunningMode.VIDEO, 
+                num_faces=1, 
+                min_face_detection_confidence=0.1, 
+                min_face_presence_confidence=0.1,
+                min_tracking_confidence=0.1
+            )
+            tracker_lms.append(mp.tasks.vision.FaceLandmarker.create_from_options(t_options))
+
+        hand_lm = mp.tasks.vision.HandLandmarker.create_from_options(hand_options)
+        segmenter = mp.tasks.vision.ImageSegmenter.create_from_options(segmenter_options)
     
     threading.Thread(target=segmenter_worker, args=(segmenter,), daemon=True).start()
     
-    if source_type in ["camera", "video"]:
-        success, init_frame = cap.read()
+    if source_type in ["camera", "video"]: success, init_frame = cap.read()
     elif source_type == "screen":
         init_frame = np.array(sct.grab(monitor))
         init_frame = cv2.cvtColor(init_frame, cv2.COLOR_BGRA2BGR)
@@ -187,15 +235,13 @@ def run_tracker(source_type="camera", source_val=0):
     while True:
         window_alive = True
         try:
-            if cv2.getWindowProperty('EmoProsopopon', cv2.WND_PROP_VISIBLE) < 1:
-                window_alive = False
+            if cv2.getWindowProperty('EmoProsopopon', cv2.WND_PROP_VISIBLE) < 1: window_alive = False
         except cv2.error:
             window_alive = False
             
         if not window_alive:
             cv2.namedWindow('EmoProsopopon', cv2.WINDOW_AUTOSIZE)
-            if not panic_mode:
-                cv2.setMouseCallback('EmoProsopopon', mouse_callback, hud)
+            if not panic_mode: cv2.setMouseCallback('EmoProsopopon', mouse_callback, param=hud)
 
         if source_type in ["camera", "video"]:
             success, frame = cap.read()
@@ -229,6 +275,9 @@ def run_tracker(source_type="camera", source_val=0):
 
         all_occ_data = [{} for _ in range(MAX_POSSIBLE_TRACKERS)]
         all_kin_data = [{} for _ in range(MAX_POSSIBLE_TRACKERS)]
+        hud_kin_preds = [("Disabled", 0.0) for _ in range(MAX_POSSIBLE_TRACKERS)]
+        hud_static_preds = [("Disabled", 0.0) for _ in range(MAX_POSSIBLE_TRACKERS)]
+        global_fused_emotions = {} 
         
         detected_heads = []
         if faces is not None:
@@ -257,37 +306,10 @@ def run_tracker(source_type="camera", source_val=0):
         detected_heads.sort(key=lambda x: x['sort_x'])
         detected_face_count = len(detected_heads)
 
-        #? ─────────────────────────────────────────────────────────────
-        #? STAGE 1: UI BOUNDING BOXES & EMOTION DISPLAY
-        #? ─────────────────────────────────────────────────────────────
-        for stable_id, head in enumerate(detected_heads):
-            bx, by, bbw, bbh = head['display_box']
-            
-            show_lbl = not panic_mode and hud.show_face_labels
-            show_emo = not panic_mode and hud.show_detected_emotion
-            
-            # Only draw the box if at least one toggle is active
-            if show_lbl or show_emo:
-                cv2.rectangle(frame, (bx, by), (bx + bbw, by + bbh), (0, 200, 255), 2)
-                
-                if show_lbl:
-                    cv2.putText(frame, f"Face {stable_id}", (bx, max(20, by - 10)), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
-                                
-                if show_emo:
-                    emo_text = current_emotions.get(stable_id, "Scanning...")
-                    # Display emotion underneath the box
-                    cv2.putText(frame, emo_text, (bx, min(h - 10, by + bbh + 25)), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 100), 2)
-
         seg_mask = shared_raw_mask
         if seg_mask is not None and seg_mask.shape != (h, w):
             seg_mask = cv2.resize(seg_mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
-        #? ─────────────────────────────────────────────────────────────
-        #? STAGE 2: THE ZOOM & FEED (MediaPipe Isolation)
-        #? ─────────────────────────────────────────────────────────────
-        
         hud_overlay = frame.copy()
         solid_green_dots = []
         solid_red_dots = []
@@ -298,13 +320,17 @@ def run_tracker(source_type="camera", source_val=0):
             if stable_id < len(detected_heads):
                 head = detected_heads[stable_id]
                 startX, startY, endX, endY = head['crop_box']
-                
                 face_crop = rgb[startY:endY, startX:endX]
                 crop_h, crop_w = face_crop.shape[:2]
                 
+                static_embedding = None
+                if model_loaded and hud.track_static and face_crop.size > 0:
+                    tensor_crop = face_transform(face_crop).unsqueeze(0).to(device)
+                    with torch.no_grad():
+                        static_embedding = static_cnn(tensor_crop).cpu().numpy().flatten()
+                
                 face_crop_resized = cv2.resize(face_crop, (256, 256))
                 mp_crop = mp.Image(image_format=mp.ImageFormat.SRGB, data=face_crop_resized)
-                
                 tracker_res = tracker_lms[t_idx].detect_for_video(mp_crop, ts_ms)
 
                 if tracker_res.face_landmarks:
@@ -345,14 +371,12 @@ def run_tracker(source_type="camera", source_val=0):
                         for i in indices:
                             if i in lm_occ_states:
                                 occ_results.append(lm_occ_states[i])
-                                if not lm_occ_states[i]:
-                                    valid_pts.append(local_signatures[i])
+                                if not lm_occ_states[i]: valid_pts.append(local_signatures[i])
                         
                         if occ_results:
                             current_occ[rname] = (sum(occ_results)/len(occ_results) > 0.5)
                         
-                        if not current_occ[rname]:
-                            kin_engine.update(rname, valid_pts)
+                        if not current_occ[rname]: kin_engine.update(rname, valid_pts)
                         else:
                             kin_engine.activity[rname] = 0.0
                             kin_engine.history[rname].clear() 
@@ -360,72 +384,83 @@ def run_tracker(source_type="camera", source_val=0):
                     all_occ_data[t_idx] = current_occ.copy()
                     all_kin_data[t_idx] = kin_engine.activity.copy()
 
-                    #? ─────────────────────────────────────────────────────────────
-                    #? STAGE 3: THE NEURAL NETWORK (LSTM)
-                    #? ─────────────────────────────────────────────────────────────
-                    # Assemble the flat 15-float array for this frame
-                    current_features = [kin_engine.activity[rname] for rname in FEATURE_ORDER]
-                    
-                    #! Push to this specific tracker's rolling buffer
-                    sequence_buffers[t_idx].append(current_features)
-                    
-                    # Maintain exactly a 30 frame memory
-                    if len(sequence_buffers[t_idx]) > 30:
-                        sequence_buffers[t_idx].pop(0)
-                        
-                    #! If we have 30 frames of memory, guess the emotion!
-                    if len(sequence_buffers[t_idx]) == 30:
-                        if model_loaded: #! Check the flag here
-                            seq_tensor = torch.tensor([sequence_buffers[t_idx]], dtype=torch.float32).to(device)
-                            
-                            with torch.no_grad():
-                                out = emo_model(seq_tensor)
-                                _, pred = torch.max(out.data, 1)
-                                pred_idx = pred.item()
-                                current_emotions[stable_id] = EMOTION_MAP_REV.get(pred_idx, "Unknown")
-                        else:
-                            current_emotions[stable_id] = "Model Missing (Run eop train)" #! Fallback text
+                    if hud.track_kinematics:
+                        current_features = [kin_engine.activity[rname] for rname in FEATURE_ORDER]
+                        sequence_buffers[t_idx].append(current_features)
+                        if len(sequence_buffers[t_idx]) > 30: sequence_buffers[t_idx].pop(0)
                     else:
-                        current_emotions[stable_id] = "Scanning..." #! Waits for 30 frames of data before making a prediction
+                        sequence_buffers[t_idx].clear() 
+                        
+                    if model_loaded:
+                        kin_data_to_pass = None
+                        hud_kin_label = "Disabled"
+                        
+                        if len(sequence_buffers[t_idx]) == 30:
+                            kin_array = np.array(sequence_buffers[t_idx])
+                            movement_delta = np.max(kin_array, axis=0) - np.min(kin_array, axis=0)
+                            
+                            if np.max(movement_delta) > 0.015: 
+                                kin_data_to_pass = sequence_buffers[t_idx]
+                            else:
+                                hud_kin_label = "No Movement" 
+                        
+                        f_idx, f_conf, k_idx, k_conf, s_idx, s_conf = fusion_engine.predict_all(
+                            kinematic_sequence=kin_data_to_pass, 
+                            static_embedding=static_embedding, 
+                            alpha=0.6 
+                        )
+                        
+                        if kin_data_to_pass is not None:
+                            hud_kin_preds[t_idx] = (EMOTION_MAP_REV.get(k_idx, "Unknown"), k_conf)
+                        else:
+                            hud_kin_preds[t_idx] = (hud_kin_label, 0.0)
+                            
+                        hud_static_preds[t_idx] = (EMOTION_MAP_REV.get(s_idx, "Disabled"), s_conf)
+                        global_fused_emotions[stable_id] = (EMOTION_MAP_REV.get(f_idx, "Scanning"), f_conf)
+                    else:
+                        global_fused_emotions[stable_id] = ("Missing Model", 0.0)
 
-                    #* Draw dots
                     for idx, lm in enumerate(remapped_landmarks):
                         px, py = int(lm.x * w), int(lm.y * h)
                         if 0 <= px < w and 0 <= py < h:
                             is_occluded = lm_occ_states.get(idx, False)
-                            
-                            if is_occluded:
-                                solid_red_dots.append((px, py))
+                            if is_occluded: solid_red_dots.append((px, py))
                             elif not panic_mode and hud.panel_open and idx in lm_colors:
                                 cv2.circle(hud_overlay, (px, py), 2, lm_colors[idx], -1, cv2.LINE_AA)
-                            else:
-                                solid_green_dots.append((px, py))
-                                
-        cv2.addWeighted(hud_overlay, 0.6, frame, 0.4, 0, frame)
-        
-        for (px, py) in solid_green_dots:
-            cv2.circle(frame, (px, py), 1, (0, 200, 50), -1, cv2.LINE_AA)
+                            else: solid_green_dots.append((px, py))
+
+        for stable_id, head in enumerate(detected_heads):
+            bx, by, bbw, bbh = head['display_box']
+            show_lbl = not panic_mode and hud.show_face_labels
+            show_emo = not panic_mode and hud.show_detected_emotion
             
-        for (px, py) in solid_red_dots:
-            cv2.circle(frame, (px, py), 2, (0, 0, 255), -1, cv2.LINE_AA)
+            if show_lbl or show_emo:
+                cv2.rectangle(frame, (bx, by), (bx + bbw, by + bbh), (0, 200, 255), 2)
+                if show_lbl:
+                    cv2.putText(frame, f"Face {stable_id}", (bx, max(20, by - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+                if show_emo:
+                    emo_text, _ = global_fused_emotions.get(stable_id, ("Scanning", 0.0))
+                    cv2.putText(frame, emo_text, (bx, min(h - 10, by + bbh + 25)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 100), 2)
+
+        cv2.addWeighted(hud_overlay, 0.6, frame, 0.4, 0, frame)
+        for (px, py) in solid_green_dots: cv2.circle(frame, (px, py), 1, (0, 200, 50), -1, cv2.LINE_AA)
+        for (px, py) in solid_red_dots: cv2.circle(frame, (px, py), 2, (0, 0, 255), -1, cv2.LINE_AA)
 
         key = cv2.waitKey(1) & 0xFF
         if panic_mode:
             if key == 113 or key == 8: break
         else:
             if hud.handle_input(key): break
-            hud.draw(frame, h, w, fps, all_occ_data, all_kin_data, detected_face_count) 
+            hud.draw(frame, h, w, fps, all_occ_data, all_kin_data, detected_face_count, hud_kin_preds, hud_static_preds, global_fused_emotions) 
 
         cv2.imshow('EmoProsopopon', frame)
-
-        if not panic_mode:
-            cv2.setMouseCallback('EmoProsopopon', mouse_callback, param=hud)
+        if not panic_mode: 
+            cv2.setMouseCallback('EmoProsopopon', lambda event, x, y, flags, param: param.handle_click(x, y)
+            if event == cv2.EVENT_LBUTTONDOWN else None, param=hud)
 
     app_running = False
     if cap: cap.release()
-    
-    for t_lm in tracker_lms:
-        t_lm.close()
+    for t_lm in tracker_lms: t_lm.close()
     hand_lm.close()
     segmenter.close()
     cv2.destroyAllWindows()
