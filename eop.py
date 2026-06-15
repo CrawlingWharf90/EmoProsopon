@@ -306,12 +306,52 @@ def check_models():
     found = sum(1 for m in required if os.path.exists(os.path.join(models_dir, m)))
     return found
 
+def ensure_tkinter(py_cmd):
+    try:
+        subprocess.run([py_cmd, "-c", "import tkinter"], capture_output=True, check=True)
+        return True
+    except subprocess.CalledProcessError:
+        print(f"\n{RED}Missing System UI Library: Tkinter{RESET}")
+        
+        if os.name == 'nt':
+            print(f"{YELLOW}On Windows, Tkinter is bundled with Python. Please rerun your Python installer and check 'tcl/tk and IDLE'.{RESET}\n")
+            return False
+            
+        print(f"{CYAN}Attempting to install Tkinter via system package manager (may prompt for sudo password)...{RESET}")
+        
+        # Detect OS Package Manager
+        if shutil.which('pacman'):
+            pkg_mgr = ["sudo", "pacman", "-S", "--noconfirm", "tk"]
+        elif shutil.which('apt') or shutil.which('apt-get'):
+            pkg_mgr = ["sudo", "apt-get", "install", "-y", "python3-tk"]
+        elif shutil.which('dnf'):
+            pkg_mgr = ["sudo", "dnf", "install", "-y", "python3-tkinter"]
+        elif shutil.which('zypper'):
+            pkg_mgr = ["sudo", "zypper", "install", "-y", "python3-tk"]
+        elif shutil.which('brew'):
+            pkg_mgr = ["brew", "install", "python-tk"]
+        else:
+            print(f"{RED}Unsupported package manager. Please install Tkinter manually for your distribution.{RESET}\n")
+            return False
+            
+        try:
+            subprocess.run(pkg_mgr, check=True)
+            print(f"{GREEN}Tkinter installed successfully!{RESET}\n")
+            return True
+        except subprocess.CalledProcessError:
+            print(f"{RED}Failed to install Tkinter automatically. Please install it manually.{RESET}\n")
+            return False
+
 def run_require(py_cmd):
     clear_screen()
+    
+    #? 1. Check & Install System UI Dependencies (Tkinter)
+    ensure_tkinter(py_cmd)
+    
     print(f"[NECESSARY] Python Libraries")
     req_path = os.path.join(BASE_DIR, "downloaders", "requirements.txt")
     
-    #? 1. PRINT REQUIREMENTS 
+    #? 2. PRINT REQUIREMENTS 
     try:
         with open(req_path, 'r') as f:
             for line in f:
@@ -322,10 +362,10 @@ def run_require(py_cmd):
     except FileNotFoundError:
         print(f"  - {RED}Warning: requirements.txt not found at {req_path}{RESET}")
 
-    #? 2. ASK FOR CONFIRMATION
+    #? 3. ASK FOR CONFIRMATION
     choice = input("\nDo you want to install the required Python libraries via pip now? (y/n): ").strip().lower()
     
-    #? 3. EXECUTE ONLY IF 'YES'
+    #? 4. EXECUTE ONLY IF 'YES'
     if choice in ['y', 'yes']:
         print(f"{YELLOW}Installing Pip Dependencies...{RESET}")
         pip_args = [py_cmd, "-m", "pip", "install", "-r", req_path]
