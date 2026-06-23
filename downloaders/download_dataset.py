@@ -158,6 +158,12 @@ def process_downloads(datasets_to_download, interactive=True):
                         save_private_url(item, url)
                         print(f"{GREEN}Updated saved link for {item}.{RESET}")
                 else:
+                    #* 1. CUSTOM PROMPTS FOR AFEW AND SFEW FOLDER SHARING LINKS
+                    if item == "AFEW":
+                        print(f"{YELLOW}👉 Please paste the share link for the folder called 'Train_AFEW' or similar (found inside the AFEW cloud directory).{RESET}")
+                    elif item == "SFEW":
+                        print(f"{YELLOW}👉 Please paste the share link for the folder called 'TRAIN' or similar (found inside SFEW2 > TRAIN).{RESET}")
+                    
                     url = input(f"🔒 Paste your approved direct download link (or press Enter to skip): ").strip()
                     if url:
                         save_private_url(item, url)
@@ -177,8 +183,24 @@ def process_downloads(datasets_to_download, interactive=True):
         extension = "tar.gz" if "tar.gz" in url else url.split('.')[-1]
         if len(extension) > 4 or "/" in extension: extension = "zip" 
             
+        #* 2. RENAME INCOMING ZIP FILES BASED ON SOURCE FOLDER NOMENCLATURE
         dest_path = os.path.join(target_dir, f"{item}.{extension}")
         download_file(url, dest_path)
+        
+        # Check if cloud provider downloaded it matching the specific remote subfolder name, then normalize it
+        potential_train_path = os.path.join(target_dir, f"Train.{extension}")
+        potential_afew_train_path = os.path.join(target_dir, f"Train_AFEW.{extension}")
+        potential_lowercase_afew_path = os.path.join(target_dir, f"train_AFEW.{extension}")
+        
+        if item == "SFEW" and os.path.exists(potential_train_path):
+            os.rename(potential_train_path, dest_path)
+            print(f"{GREEN}🔄 Normalized 'Train.{extension}' to '{item}.{extension}'{RESET}")
+        elif item == "AFEW" and os.path.exists(potential_afew_train_path):
+            os.rename(potential_afew_train_path, dest_path)
+            print(f"{GREEN}🔄 Normalized 'Train_AFEW.{extension}' to '{item}.{extension}'{RESET}")
+        elif item == "AFEW" and os.path.exists(potential_lowercase_afew_path):
+            os.rename(potential_lowercase_afew_path, dest_path)
+            print(f"{GREEN}🔄 Normalized 'train_AFEW.{extension}' to '{item}.{extension}'{RESET}")
     
     if interactive: input("\nPress Enter to continue...")
 
@@ -368,7 +390,7 @@ def run_modality_menu(modality):
         elif choice == '4': return run_modality_menu(other_modality)
         elif choice == '5': 
             run_eop("--tui extractor");
-            break
+            sys.exit(0)
         elif choice == '0': break
 
 def run_tui():
@@ -387,7 +409,7 @@ def run_tui():
         elif choice == '2': run_modality_menu('image')
         elif choice == '3':
             run_eop("--tui extractor"); 
-            break
+            sys.exit(0)
         elif choice == '0': clear_screen(); break
 
 def main():

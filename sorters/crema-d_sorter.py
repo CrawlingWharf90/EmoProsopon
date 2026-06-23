@@ -1,17 +1,23 @@
 import os
 import shutil
 import sys
+import argparse
 
-#* CREMA-D Emotion Codes (3rd chunk in the filename)
+parser = argparse.ArgumentParser()
+parser.add_argument('--image', action='store_true')
+parser.add_argument('--video', action='store_true')
+args, _ = parser.parse_known_args()
+
+modality = "video" if args.video else "video"
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+UNPACK_DIR = os.path.join(BASE_DIR, "unpkged_datasets", modality, "CREMA-D")
+TARGET_DIR = os.path.join(BASE_DIR, "sorted_datasets", modality)
+
+#* CREMA-D Emotion Codes
 EMOTION_MAP = {
     "ANG": "Angry", "DIS": "Disgust", "FEA": "Fear", 
     "HAP": "Happy", "NEU": "Neutral", "SAD": "Sad"
-    #! Note: CREMA-D does not contain "Surprise"
 }
-
-#! The TUI extracted it here
-UNPACK_DIR = os.path.join("unpkged_datasets", "CREMA-D") 
-TARGET_DIR = "sorted_datasets" 
 
 def print_progress(iteration, total, prefix='', length=30):
     if total == 0: return
@@ -27,7 +33,6 @@ def sort_cremad():
         print(f"Error: {UNPACK_DIR} not found.")
         sys.exit(1)
 
-    #* Gather all video files
     video_files = []
     for root, _, files in os.walk(UNPACK_DIR):
         for file in files:
@@ -44,7 +49,6 @@ def sort_cremad():
     for i, filepath in enumerate(video_files):
         filename = os.path.basename(filepath)
         
-        #* Example filename: 1001_DFA_ANG_XX.flv
         parts = filename.split('_')
         if len(parts) >= 3:
             emotion_code = parts[2]
@@ -52,11 +56,10 @@ def sort_cremad():
             if emotion_code in EMOTION_MAP:
                 emotion_name = EMOTION_MAP[emotion_code]
                 
-                #? Create the target emotion folder
                 target_folder = os.path.join(TARGET_DIR, emotion_name)
                 os.makedirs(target_folder, exist_ok=True)
                 
-                dst = os.path.join(target_folder, filename)
+                dst = os.path.join(target_folder, f"cremad_{filename}")
                 if not os.path.exists(dst): 
                     shutil.copy2(filepath, dst)
         

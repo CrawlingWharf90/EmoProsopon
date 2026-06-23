@@ -57,8 +57,8 @@ def sort_savee():
                     
                     target_folder = os.path.join(TARGET_DIR, emotion_name)
                     os.makedirs(target_folder, exist_ok=True)
-                    
-                    dst = os.path.join(target_folder, filename)
+
+                    dst = os.path.join(target_folder, f"savee_{filename}")
                     if not os.path.exists(dst): 
                         shutil.copy2(filepath, dst)
         

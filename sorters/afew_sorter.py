@@ -1,18 +1,30 @@
 import os
 import shutil
 import sys
+import argparse
 
-#* AFEW typically uses Capitalized proper names for folders
+parser = argparse.ArgumentParser()
+parser.add_argument('--image', action='store_true')
+parser.add_argument('--video', action='store_true')
+args, _ = parser.parse_known_args()
+
+modality = "video" if args.video else "video"
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+UNPACK_DIR = os.path.join(BASE_DIR, "unpkged_datasets", modality, "AFEW") 
+TARGET_DIR = os.path.join(BASE_DIR, "sorted_datasets", modality) 
+
 EMOTION_MAP = {
     "Angry": "Angry", "Disgust": "Disgust", "Fear": "Fear", 
     "Happy": "Happy", "Neutral": "Neutral", "Sad": "Sad", "Surprise": "Surprise"
 }
 
-#! THEORETICAL SORTER: Based on EmotiW AFEW challenge hierarchy
-#! Awaiting community verification on exact extraction paths.
-UNPACK_DIR = os.path.join("unpkged_datasets", "AFEW") 
-TARGET_DIR = "sorted_datasets" 
-
+#! THIS SORTER IS BASED ON THE DATASETS' FOLDER STRUCTURE WHEN I GOT IT
+#! THE WAY FILES ARE ORGANIZED MIGHT HAVE BEEN CHANGED KINDLY MAKE SURE
+#! THAT THE DATASET IS STILL ORGANIZED IN SUBFOLDERS EACH NAMED BASED
+#! ON THE EMOTION THEY CONTAIN.
+#!
+#! - JUNE 2026
 def print_progress(iteration, total, prefix='', length=30):
     if total == 0: return
     percent = ("{0:.1f}").format(100 * (iteration / float(total)))
@@ -38,12 +50,11 @@ def sort_afew():
         print("No video files found in the unpacked AFEW folder.")
         sys.exit(1)
 
-    print(f"Found {total_files} AFEW files. Sorting by emotion...")
+    print(f"Found {total_files} AFEW raw videos. Sorting by emotion...")
 
     for i, filepath in enumerate(video_files):
         filename = os.path.basename(filepath)
         
-        #? The emotion is the name of the immediate parent folder (e.g. Train/Angry/video.mp4)
         parent_folder = os.path.basename(os.path.dirname(filepath))
         
         if parent_folder in EMOTION_MAP:
