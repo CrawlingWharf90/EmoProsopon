@@ -57,7 +57,9 @@ DATASETS = {
     "AffectNet": {"type": "image", "public": False, "default": False, "auth_url": "http://mohammadmahoor.com/affectnet/", "desc": "Large-scale Database of Facial Expressions in the Wild"},
     "RAF-DB": {"type": "image", "public": False, "default": False, "auth_url": "http://www.whdeng.cn/raf/model1.html", "desc": "Real-world Affective Faces Database"},
     "SFEW": {"type": "image", "public": False, "default": False, "auth_url": "https://cs.anu.edu.au/few/", "desc": "Static Facial Expressions in the Wild"},
-    "KDEF": {"type": "image", "public": False, "default": False, "auth_url": "https://www.kdef.se/", "desc": "Karolinska Directed Emotional Faces"}
+    "KDEF": {"type": "image", "public": False, "default": False, "auth_url": "https://www.kdef.se/", "desc": "Karolinska Directed Emotional Faces"},
+    "Oulu-CASIA": {"type": "image", "public": False, "default": False, "auth_url": "http://www.cse.oulu.fi/CMV/Downloads/Oulu-CASIA", "desc": "Oulu-CASIA NIR VIS Database"},
+    "FACES": {"type": "image", "public": False, "default": False, "auth_url": "https://faces.mpdl.mpg.de/", "desc": "Max Planck FACES Database"}
 }
 
 #* ─────────────────────────────────────────────────────────────────
