@@ -19,6 +19,10 @@ EMOTION_MAP = {
     "HAP": "Happy", "NEU": "Neutral", "SAD": "Sad"
 }
 
+def get_prefix():
+    """The exact prefix this sorter writes onto every sorted filename."""
+    return "cremad"
+
 def print_progress(iteration, total, prefix='', length=30):
     if total == 0: return
     percent = ("{0:.1f}").format(100 * (iteration / float(total)))

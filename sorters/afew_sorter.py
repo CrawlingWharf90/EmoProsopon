@@ -19,6 +19,10 @@ EMOTION_MAP = {
     "Happy": "Happy", "Neutral": "Neutral", "Sad": "Sad", "Surprise": "Surprise"
 }
 
+def get_prefix():
+    """The exact prefix this sorter writes onto every sorted filename."""
+    return "AFEW"
+
 #! THIS SORTER IS BASED ON THE DATASETS' FOLDER STRUCTURE WHEN I GOT IT
 #! THE WAY FILES ARE ORGANIZED MIGHT HAVE BEEN CHANGED KINDLY MAKE SURE
 #! THAT THE DATASET IS STILL ORGANIZED IN SUBFOLDERS EACH NAMED BASED

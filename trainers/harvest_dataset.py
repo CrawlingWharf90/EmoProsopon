@@ -1,5 +1,6 @@
 import os
 import sys
+import threading, time
 
 def configure_mediapipe_logs(verbose: bool = False): 
     if not verbose:
@@ -27,7 +28,6 @@ sys.path.append(BASE_DIR)
 
 #* IMPORT LOCAL MODULES
 from emoprosopon.kinematics import KinematicManager
-from emoprosopon.static_cnn import StaticFeatureExtractor, get_face_transform
 
 #* ─────────────────────────────────────────────────────────────────
 #* CONFIGURATION & PATHS
@@ -36,7 +36,7 @@ DATASET_VIDEO_DIR = os.path.join(BASE_DIR, "sorted_datasets", "video")
 DATASET_IMAGE_DIR = os.path.join(BASE_DIR, "sorted_datasets", "image")
 
 OUT_KINEMATIC_DIR = os.path.join(BASE_DIR, "processed_data", "kinematic")
-OUT_STATIC_DIR = os.path.join(BASE_DIR, "processed_data", "static")
+OUT_STATIC_CROP_DIR = os.path.join(BASE_DIR, "processed_data", "static_crops")
 
 YUNET_MODEL_PATH = os.path.join(BASE_DIR, 'models', 'face_detection_yunet_2023mar.onnx')
 FACE_LM_PATH = os.path.join(BASE_DIR, 'models', 'face_landmarker.task')
@@ -61,12 +61,24 @@ EMOTION_MAP = {
     "Fear": 4, "Surprise": 5, "Disgust": 6
 }
 
-def print_progress(iteration, total, prefix='', length=30):
+def print_progress(iteration, total, prefix='', length=30, start_time=None):
     if total == 0: return
     percent = ("{0:.1f}").format(100 * (iteration / float(total)))
     filled_length = int(length * iteration // total)
     bar = '█' * filled_length + '-' * (length - filled_length)
-    sys.stdout.write(f'\r{prefix} | [{bar}] ({iteration}/{total}) {percent}% Complete')
+    
+    eta_str = ""
+    if start_time is not None:
+        elapsed = time.time() - start_time
+        if iteration > 0 and iteration < total:
+            avg_time = elapsed / iteration
+            rem = total - iteration
+            eta_secs = int(rem * avg_time)
+            hrs, rem_secs = divmod(eta_secs, 3600)
+            mins, secs = divmod(rem_secs, 60)
+            eta_str = f" | ETA: {int(hrs)}h {int(mins)}m" if hrs > 0 else f" | ETA: {int(mins)}m {int(secs)}s"
+
+    sys.stdout.write('\r\033[K' + f'{prefix} | [{bar}] ({iteration}/{total}) {percent}% Complete{eta_str}')
     sys.stdout.flush()
     if iteration == total: print()
 
@@ -186,91 +198,85 @@ def harvest_kinematic():
     else:
         print(f"{YELLOW}No valid kinematics extracted.{RESET}\n")
 
-
 #* ─────────────────────────────────────────────────────────────────
-#* 2. STATIC HARVESTER (Images)
+#* 2. STATIC HARVESTER (Face Pre-Cropper)
 #* ─────────────────────────────────────────────────────────────────
-def process_image(img_path, yunet, static_model, transform, device):
-    frame = cv2.imread(img_path)
-    if frame is None: return None
-    
-    h, w = frame.shape[:2]
-    yunet.setInputSize((w, h))
-    _, faces = yunet.detect(frame)
-    
-    if faces is not None and len(faces) > 0:
-        bx, by, bbw, bbh = map(int, faces[0][:4])
-        bx, by = max(0, bx), max(0, by)
-        bbw, bbh = min(w - bx, bbw), min(h - by, bbh)
-
-        cx, cy = bx + bbw // 2, by + bbh // 2
-        size = int(max(bbw, bbh) * 1.5) 
-        half = size // 2
-        startX, startY = max(0, cx - half), max(0, cy - half)
-        endX, endY = min(w, cx + half), min(h, cy + half)
-        
-        if endX - startX > 20 and endY - startY > 20:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            face_crop = rgb[startY:endY, startX:endX]
-            
-            # Apply PyTorch transform (resizes to 224x224 and normalizes)
-            tensor_crop = transform(face_crop).unsqueeze(0).to(device)
-            
-            with torch.no_grad():
-                embedding = static_model(tensor_crop).cpu().numpy().flatten()
-            return embedding
-    return None
-
 def harvest_static():
-    print(f"\n{CYAN}=== Starting Static Harvester (Images) ==={RESET}")
-    os.makedirs(OUT_STATIC_DIR, exist_ok=True)
-
+    """
+    Pre-processes the entire image dataset. Finds faces, crops them, 
+    and saves them to processed_data/static_crops/.
+    Doing this once saves hundreds of hours during the training loop.
+    """
+    print(f"\n{CYAN}=== Starting Static Harvester (Face Pre-Cropper) ==={RESET}")
+    print(f"{YELLOW}This process will locate and crop faces from all images to drastically speed up training.{RESET}")
+    
+    os.makedirs(OUT_STATIC_CROP_DIR, exist_ok=True)
     if not os.path.exists(DATASET_IMAGE_DIR):
         print(f"{RED}No image datasets found at {DATASET_IMAGE_DIR}{RESET}")
         return
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"{YELLOW}Loading MobileNetV2 CNN onto {device}...{RESET}")
-    
-    # Initialize the customized CNN and its transform logic
-    static_model = StaticFeatureExtractor(embedding_size=64).to(device)
-    static_model.eval()
-    transform = get_face_transform()
-    
     yunet = cv2.FaceDetectorYN.create(YUNET_MODEL_PATH, "", (320, 320), score_threshold=0.4, top_k=1)
-    
-    X_data, Y_labels = [], []
 
-    for emotion_folder in os.listdir(DATASET_IMAGE_DIR):
-        if emotion_folder not in EMOTION_MAP: continue
-            
-        label = EMOTION_MAP[emotion_folder]
-        folder_path = os.path.join(DATASET_IMAGE_DIR, emotion_folder)
-        img_files = glob.glob(os.path.join(folder_path, "*.*"))
-        total_imgs = len(img_files)
+    for emotion_name in EMOTION_MAP.keys():
+        in_folder = os.path.join(DATASET_IMAGE_DIR, emotion_name)
+        out_folder = os.path.join(OUT_STATIC_CROP_DIR, emotion_name)
         
+        if not os.path.exists(in_folder): continue
+        os.makedirs(out_folder, exist_ok=True)
+        
+        files = [f for f in os.listdir(in_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))]
+        total_imgs = len(files)
         if total_imgs == 0: continue
-        print(f"Processing {total_imgs} images for {YELLOW}'{emotion_folder}'...{RESET}")
         
-        for i, img_path in enumerate(img_files):
-            try:
-                emb = process_image(img_path, yunet, static_model, transform, device)
-                if emb is not None:
-                    X_data.append(emb)
-                    Y_labels.append(label)
-            except Exception as e:
-                pass
-            print_progress(i + 1, total_imgs, prefix=f"  ↳ {emotion_folder}")  
+        print(f"Cropping faces for {YELLOW}'{emotion_name}'{RESET}...")
+        start_time = time.time()
+        
+        for i, f in enumerate(files):
+            img_path = os.path.join(in_folder, f)
+            out_path = os.path.join(out_folder, f)
+            
+            #? Skip if already processed
+            if os.path.exists(out_path):
+                # ONLY print every 100 files to prevent terminal flooding
+                if i % 100 == 0 or i == total_imgs - 1:
+                    print_progress(i + 1, total_imgs, prefix=f"  ↳ {emotion_name}", start_time=start_time)
+                continue
                 
-    if len(X_data) > 0:
-        X_data = np.array(X_data)
-        Y_labels = np.array(Y_labels)
-        np.save(os.path.join(OUT_STATIC_DIR, 'X_embeddings.npy'), X_data)
-        np.save(os.path.join(OUT_STATIC_DIR, 'Y_labels.npy'), Y_labels)
-        print(f"{GREEN}Static Harvesting Complete! Saved {len(X_data)} embeddings of length 64.{RESET}\n")
-    else:
-        print(f"{YELLOW}No valid embeddings extracted.{RESET}\n")
+            frame = cv2.imread(img_path)
+            if frame is None: continue
+            
+            h, w = frame.shape[:2]
+            yunet.setInputSize((w, h))
+            _, faces = yunet.detect(frame)
+            
+            if faces is not None and len(faces) > 0:
+                try:
+                    bx, by, bbw, bbh = map(int, faces[0][:4])
+                    bx, by = max(0, bx), max(0, by)
+                    bbw, bbh = min(w - bx, bbw), min(h - by, bbh)
 
+                    cx, cy = bx + bbw // 2, by + bbh // 2
+                    size = int(max(bbw, bbh) * 1.5)
+                    half = size // 2
+                    startX, startY = max(0, cx - half), max(0, cy - half)
+                    endX, endY = min(w, cx + half), min(h, cy + half)
+
+                    face_crop = frame[startY:endY, startX:endX]
+                    if face_crop.size == 0: face_crop = frame
+                except Exception as e:
+                    # Gracefully skip corrupted images
+                    face_crop = frame
+            else:
+                face_crop = frame 
+                
+            face_crop = cv2.resize(face_crop, (224, 224))
+            cv2.imwrite(out_path, face_crop)
+            
+            # Print progress every 50 images for new files
+            if i % 50 == 0 or i == total_imgs - 1:
+                print_progress(i + 1, total_imgs, prefix=f"  ↳ {emotion_name}", start_time=start_time)
+                
+    print(f"\n{GREEN}Static Pre-Cropping Complete! You can now run the trainer.{RESET}\n")
 
 #* ─────────────────────────────────────────────────────────────────
 #* CLI ROUTING LOGIC
@@ -285,6 +291,8 @@ if __name__ == "__main__":
             run_kinematic = False
         elif flag in ["--kinematic", "-k"]:
             run_static = False
+        else:
+            print(f"{YELLOW}Unknown flag provided. Running both by default.{RESET}")
 
     if run_kinematic:
         harvest_kinematic()

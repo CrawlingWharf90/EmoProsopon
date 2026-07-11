@@ -25,6 +25,10 @@ OUTPUT_DIR = os.path.join(BASE_DIR, 'sorted_datasets', modality)
 
 VALID_EMOTIONS = ['Angry', 'Disgust', 'Fear', 'Happy', 'Sad', 'Surprise', 'Neutral']
 
+def get_prefix():
+    """The exact prefix this sorter writes onto every sorted filename."""
+    return "sfew"
+
 TARGET_ZIPS = [f"{e.lower()}.zip" for e in VALID_EMOTIONS] + ["train_aligned_faces.zip", "val_aligned_faces.zip"]
 
 def sort():

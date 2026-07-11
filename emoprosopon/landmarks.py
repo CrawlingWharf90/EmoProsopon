@@ -16,7 +16,7 @@ logging.getLogger('absl').setLevel(logging.ERROR)
 #* ─────────────────────────────────────────────────────────────────
 #* DEVELOPER SETTINGS
 #* ─────────────────────────────────────────────────────────────────
-SILENT_MODE = True  #! Set to False to enable developer console logs
+SILENT_MODE = False  #! Set to False to enable developer console logs
 
 def dev_print(*args, **kwargs):
     """Custom print function that respects SILENT_MODE."""
@@ -157,9 +157,7 @@ def run_tracker(source_type="camera", source_val=0):
     
     try:
         fusion_engine = EmotionFusionEngine(device=device.type)
-        static_cnn = StaticFeatureExtractor(embedding_size=64).to(device)
-        static_cnn.eval()
-        face_transform = get_face_transform()
+        face_transform = get_face_transform(is_training=False)
         
         model_loaded = True 
         dev_print(f"✅ Two-Stream Fusion Engine loaded successfully on {device}!")
@@ -169,6 +167,8 @@ def run_tracker(source_type="camera", source_val=0):
 
     if not panic_mode:
         hud.model_loaded = model_loaded 
+        if model_loaded:
+            hud.set_static_model_info(fusion_engine.static_net.get_model_info())
 
     EMOTION_MAP_REV = {-1: "Scanning", 0: "Neutral", 1: "Happy", 2: "Sad", 3: "Angry", 4: "Fear", 5: "Surprise", 6: "Disgust"}
     
@@ -323,11 +323,9 @@ def run_tracker(source_type="camera", source_val=0):
                 face_crop = rgb[startY:endY, startX:endX]
                 crop_h, crop_w = face_crop.shape[:2]
                 
-                static_embedding = None
+                static_crop = None
                 if model_loaded and hud.track_static and face_crop.size > 0:
-                    tensor_crop = face_transform(face_crop).unsqueeze(0).to(device)
-                    with torch.no_grad():
-                        static_embedding = static_cnn(tensor_crop).cpu().numpy().flatten()
+                    static_crop = face_transform(face_crop).unsqueeze(0).to(device)
                 
                 face_crop_resized = cv2.resize(face_crop, (256, 256))
                 mp_crop = mp.Image(image_format=mp.ImageFormat.SRGB, data=face_crop_resized)
@@ -406,7 +404,7 @@ def run_tracker(source_type="camera", source_val=0):
                         
                         f_idx, f_conf, k_idx, k_conf, s_idx, s_conf = fusion_engine.predict_all(
                             kinematic_sequence=kin_data_to_pass, 
-                            static_embedding=static_embedding, 
+                            static_crop=static_crop, 
                             alpha=0.6 
                         )
                         

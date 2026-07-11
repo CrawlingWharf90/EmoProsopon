@@ -1,4 +1,6 @@
 import os
+import json
+import importlib.util
 import select
 import sys
 import time
@@ -24,6 +26,62 @@ def get_dl_dir(modality): return os.path.join(BASE_DIR, 'dataset', modality)
 def get_up_dir(modality): return os.path.join(BASE_DIR, 'unpkged_datasets', modality)
 def get_so_dir(modality): return os.path.join(BASE_DIR, 'sorted_datasets', modality)
 SORTERS_DIR = os.path.join(BASE_DIR, 'sorters')
+
+# Emotion subfolders that live inside sorted_datasets/<modality>/
+EMOTION_FOLDERS = ["Angry", "Disgust", "Fear", "Happy", "Neutral", "Sad", "Surprise"]
+
+# Once we've asked a sorter script for its prefix, cache it in-memory for
+# the rest of this run - no need to re-import the module every time.
+_PREFIX_CACHE = {}
+
+def _get_dataset_prefix(name):
+    """
+    Every sorter script now exposes a get_prefix() function that returns the
+    exact string it prepends to sorted filenames. Rather than guessing or
+    normalizing the dataset name, we import the sorter module directly and
+    ask it - so this always matches reality, no matter how a given sorter
+    chooses to name its files.
+    """
+    if name in _PREFIX_CACHE:
+        return _PREFIX_CACHE[name]
+
+    sorter_path = os.path.join(SORTERS_DIR, f"{name.lower()}_sorter.py")
+    if not os.path.exists(sorter_path):
+        return None
+
+    try:
+        spec = importlib.util.spec_from_file_location(f"{name.lower()}_sorter_module", sorter_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        prefix = module.get_prefix().lower()
+    except Exception as e:
+        print(f"{RED}❌ Could not read prefix from {sorter_path}: {e}{RESET}")
+        return None
+
+    _PREFIX_CACHE[name] = prefix
+    return prefix
+
+# Once we've confirmed a dataset has sorted files on disk, we cache that fact
+# here so we never have to re-scan a (potentially million-file) folder again.
+SORT_CACHE_FILE = os.path.join(BASE_DIR, '.sort_status_cache.json')
+
+def _load_sort_cache():
+    if os.path.isfile(SORT_CACHE_FILE):
+        try:
+            with open(SORT_CACHE_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+def _save_sort_cache(cache):
+    try:
+        with open(SORT_CACHE_FILE, 'w') as f:
+            json.dump(cache, f, indent=2)
+    except OSError:
+        pass
+
+_SORT_CACHE = _load_sort_cache()
 
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -76,8 +134,53 @@ def extraction_status(name, modality):
         
     return "extracted"
 
+def _scan_for_sorted_files(name, modality):
+    """
+    Checks whether sorted_datasets/<modality>/<EmotionFolder>/ contains at
+    least one file prefixed with this dataset's real, sorter-reported prefix.
+
+    This uses os.scandir() rather than os.listdir(): scandir is a thin
+    wrapper around the OS's own directory iterator, so it yields entries
+    one at a time instead of first materializing the full (potentially
+    million-entry) folder into a Python list. Combined with an early
+    "return True" the instant a match is found, this is the fastest way
+    to answer an existence question without building a separate index -
+    we only ever pay for as much of the folder as we actually need to read.
+    """
+    so_dir = get_so_dir(modality)
+    if not os.path.isdir(so_dir):
+        return False
+
+    prefix = _get_dataset_prefix(name)
+    if not prefix:
+        return False
+    prefix = f"{prefix}_"
+
+    for label in EMOTION_FOLDERS:
+        label_dir = os.path.join(so_dir, label)
+        if not os.path.isdir(label_dir):
+            continue
+        try:
+            with os.scandir(label_dir) as it:
+                for entry in it:
+                    if entry.name.lower().startswith(prefix) and entry.is_file(follow_symlinks=False):
+                        return True
+        except OSError:
+            continue
+
+    return False
+
 def is_sorted(name, modality):
-    return os.path.isfile(os.path.join(get_up_dir(modality), name, '.sorted_marker'))
+    # Once something is known to be sorted, trust the cache forever - it
+    # can only ever go from "not sorted" to "sorted", never the reverse.
+    if _SORT_CACHE.get(modality, {}).get(name):
+        return True
+
+    found = _scan_for_sorted_files(name, modality)
+    if found:
+        _SORT_CACHE.setdefault(modality, {})[name] = True
+        _save_sort_cache(_SORT_CACHE)
+    return found
 
 def perform_extraction(to_extract, modality, interactive=True):
     up_dir, dl_dir = get_up_dir(modality), get_dl_dir(modality)
@@ -139,7 +242,8 @@ def perform_sorting(to_sort, modality, interactive=True):
         if os.path.exists(sorter_script):
             try:
                 subprocess.run([sys.executable, sorter_script, f"--{modality}"], check=True)
-                open(os.path.join(get_up_dir(modality), name, '.sorted_marker'), 'a').close()
+                _SORT_CACHE.setdefault(modality, {})[name] = True
+                _save_sort_cache(_SORT_CACHE)
                 print(f"{GREEN}✅ {name} sorting complete!{RESET}")
             except subprocess.CalledProcessError as e:
                 print(f"{RED}❌ Error running {sorter_script}: {e}{RESET}")
@@ -147,6 +251,47 @@ def perform_sorting(to_sort, modality, interactive=True):
             print(f"{RED}❌ Missing script: '{name.lower()}_sorter.py' in '{SORTERS_DIR}/'.{RESET}")
             
     if interactive: input(f"\n{GREEN}DONE - Press Enter to continue...{RESET}")
+
+#* ─────────────────────────────────────────────────────────────────
+#* STARTUP - PRELOAD SORT STATUS (with loading screen)
+#* ─────────────────────────────────────────────────────────────────
+def _print_loading_bar(iteration, total, length=44):
+    filled = length if total == 0 else int(length * iteration // total)
+    bar = '█' * filled + '-' * (length - filled)
+    percent = 100 if total == 0 else int(100 * iteration / total)
+    sys.stdout.write(f'\r[{bar}] {percent}%')
+    sys.stdout.flush()
+
+def preload_sort_status():
+    """
+    Runs once at startup, before the TUI is shown. Figures out (and caches)
+    which extracted datasets are already sorted, for both modalities.
+
+    This can be slow the first time it hits a dataset with a huge amount of
+    files, so we show a loading screen while it works. Datasets already
+    known to be sorted (from a previous run's cache) are skipped instantly.
+    """
+    targets = []
+    for modality in ('video', 'image'):
+        up_dir = get_up_dir(modality)
+        if not os.path.isdir(up_dir):
+            continue
+        for name in os.listdir(up_dir):
+            if os.path.isdir(os.path.join(up_dir, name)) and os.listdir(os.path.join(up_dir, name)):
+                targets.append((name, modality))
+
+    if not targets:
+        return
+
+    clear_screen()
+    print(f"\n{CYAN}Getting Everything Ready For You{RESET}\n")
+    _print_loading_bar(0, len(targets))
+
+    for i, (name, modality) in enumerate(targets):
+        is_sorted(name, modality)  # cache-aware: instant if already known
+        _print_loading_bar(i + 1, len(targets))
+
+    print()
 
 #* ─────────────────────────────────────────────────────────────────
 #* SUB-MENUS (Modality Aware)
@@ -217,6 +362,41 @@ def menu_sort(modality):
             
         if to_sort: perform_sorting(to_sort, modality)
 
+def remove_sorted_files(name, modality):
+    """
+    Deletes every file prefixed with this dataset's real, sorter-reported
+    prefix from each emotion subfolder in sorted_datasets/<modality>/, and
+    clears the dataset's cached "sorted" status so it doesn't linger as a
+    stale True.
+    """
+    so_dir = get_so_dir(modality)
+    prefix = _get_dataset_prefix(name)
+    removed = 0
+
+    if prefix and os.path.isdir(so_dir):
+        prefix = f"{prefix}_"
+        for label in EMOTION_FOLDERS:
+            label_dir = os.path.join(so_dir, label)
+            if not os.path.isdir(label_dir):
+                continue
+            try:
+                with os.scandir(label_dir) as it:
+                    for entry in it:
+                        if entry.name.lower().startswith(prefix) and entry.is_file(follow_symlinks=False):
+                            try:
+                                os.remove(entry.path)
+                                removed += 1
+                            except OSError as e:
+                                print(f"{RED}❌ Could not remove {entry.path}: {e}{RESET}")
+            except OSError:
+                continue
+
+    if modality in _SORT_CACHE and name in _SORT_CACHE[modality]:
+        del _SORT_CACHE[modality][name]
+        _save_sort_cache(_SORT_CACHE)
+
+    return removed
+
 def menu_manage(modality):
     while True:
         clear_screen()
@@ -245,7 +425,11 @@ def menu_manage(modality):
         if to_remove:
             for name in to_remove:
                 shutil.rmtree(os.path.join(get_up_dir(modality), name), ignore_errors=True)
-                print(f"{GREEN}✅ Removed unpacked data for {name}.{RESET}")
+                removed_count = remove_sorted_files(name, modality)
+                if removed_count:
+                    print(f"{GREEN}✅ Removed unpacked data for {name} and {removed_count} sorted file(s).{RESET}")
+                else:
+                    print(f"{GREEN}✅ Removed unpacked data for {name}.{RESET}")
             input(f"\n{GREEN}DONE - Press Enter to continue...{RESET}")
 
 #* ─────────────────────────────────────────────────────────────────
@@ -308,6 +492,7 @@ def main():
     if args.extract or args.sort:
         print(f"{YELLOW}CLI direct extraction is deprecated pending dual-modality flags. Please use the TUI.{RESET}")
     else:
+        preload_sort_status()
         run_tui()
 
 if __name__ == "__main__":

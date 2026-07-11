@@ -9,6 +9,10 @@ EMOTION_MAP = {
     "h": "Happy", "n": "Neutral", "sa": "Sad", "su": "Surprise"
 }
 
+def get_prefix():
+    """The exact prefix this sorter writes onto every sorted filename."""
+    return "savee"
+
 UNPACK_DIR = os.path.join("unpkged_datasets", "SAVEE") 
 TARGET_DIR = "sorted_datasets" 
 

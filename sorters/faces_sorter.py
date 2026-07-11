@@ -19,6 +19,10 @@ EMOTION_MAP = {
     'h': 'Happy', 'n': 'Neutral', 's': 'Sad'
 }
 
+def get_prefix():
+    """The exact prefix this sorter writes onto every sorted filename."""
+    return "faces"
+
 def sort():
     for emotion in EMOTION_MAP.values():
         os.makedirs(os.path.join(OUTPUT_DIR, emotion), exist_ok=True)

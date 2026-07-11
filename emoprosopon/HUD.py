@@ -36,6 +36,7 @@ class HUDManager:
         self.load_config()
 
         self.model_loaded = False 
+        self.static_model_info = None  # populated from the real model at load time - see set_static_model_info()
         self.last_detected_count = 0 
         
         self.region_colors = {
@@ -103,6 +104,17 @@ class HUDManager:
                 json.dump(config, f, indent=4)
         except Exception as e:
             print(f"Warning: Failed to save HUD settings: {e}")
+
+    def set_static_model_info(self, info):
+        """
+        Called once by the caller after it successfully constructs the real
+        StaticFeatureExtractor, passing along model.get_model_info(). This is
+        the only path by which architecture/input-shape/output-dim text ever
+        reaches the display - there is no hardcoded fallback string, so the
+        panel can never show stale info: it either reflects the real,
+        currently-loaded model, or it shows "Unavailable".
+        """
+        self.static_model_info = info
 
     def handle_click(self, x, y):
         for (x1, y1, x2, y2, action, param) in self.click_zones:
@@ -249,6 +261,16 @@ class HUDManager:
             self._add_zone(cx - 40, cy - 40, 80, 80, "open_panel")
         else:
             self._add_zone(cx - 40, cy - 40, 80, 80, "close_panel")
+
+    def _static_info_field(self, key):
+        """
+        Reads one field out of the real model's reported info. Falls back to
+        'Unavailable' only if the model never loaded - never to a guessed or
+        hardcoded value.
+        """
+        if not self.static_model_info:
+            return "Unavailable"
+        return self.static_model_info.get(key, "Unavailable")
 
     def _draw_toggle(self, frame, x, y, label, is_on, action_name, disabled=False):
         txt_col = (100, 100, 100) if disabled else (200, 200, 200)
@@ -398,11 +420,11 @@ class HUDManager:
             cv2.putText(frame, status_txt, (x0 + 130, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, status_col, 1)
             y += 25
             
-            cv2.putText(frame, "Architecture:  MobileNetV2 (CNN)", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
+            cv2.putText(frame, "Architecture:  " + self._static_info_field("architecture"), (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
             y += 25
-            cv2.putText(frame, "Input Shape:   256x256 RGB", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
+            cv2.putText(frame, "Input Shape:   " + self._static_info_field("input_shape"), (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
             y += 25
-            cv2.putText(frame, "Output Layer:  64-D Embedding Vector", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
+            cv2.putText(frame, "Output Layer:  " + self._static_info_field("output_dim"), (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
             y += 45
             
             cv2.putText(frame, "- Network Prediction -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)

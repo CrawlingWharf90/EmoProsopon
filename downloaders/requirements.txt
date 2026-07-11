@@ -2,4 +2,9 @@ opencv-python
 mediapipe
 numpy
 torch
+torchvision
+scikit-learn
 mss
+datasets
+huggingface_hub
+kaggle

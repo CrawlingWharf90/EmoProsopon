@@ -6,6 +6,7 @@ import urllib.request
 import shutil
 import argparse
 import json
+import atexit
 
 #* ─────────────────────────────────────────────────────────────────
 #* GLOBALLY BYPASS SSL VERIFICATION
@@ -26,6 +27,8 @@ RESET = '\033[0m'
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 PRIVATE_URLS_FILE = os.path.join(BASE_DIR, 'dataset', '.private_urls.json')
+CONFIG_FILE = os.path.join(BASE_DIR, '.eop_config')
+TEMP_DIR = os.path.join(BASE_DIR, 'dataset', 'temp')
 
 def get_target_dir(modality):
     return os.path.join(BASE_DIR, 'dataset', modality)
@@ -34,32 +37,118 @@ def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 #* ─────────────────────────────────────────────────────────────────
+#* GARBAGE COLLECTION (TEMP CLEANUP)
+#* ─────────────────────────────────────────────────────────────────
+def cleanup_temp_folder():
+    """Ensures the temp folder is deleted when the script exits, even on errors/crashes."""
+    if os.path.exists(TEMP_DIR):
+        try:
+            shutil.rmtree(TEMP_DIR)
+        except Exception:
+            pass # Suppress exit errors if file is locked
+
+atexit.register(cleanup_temp_folder)
+
+#* ─────────────────────────────────────────────────────────────────
+#* CONFIG & API KEY MANAGEMENT
+#* ─────────────────────────────────────────────────────────────────
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+def save_config(config_data):
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config_data, f, indent=4)
+    except Exception as e:
+        print(f"{RED}Failed to save config: {e}{RESET}")
+
+def check_hf_token():
+    config = load_config()
+    token = config.get("HF_API_KEY", "")
+    
+    if not token:
+        print(f"\n{YELLOW}⚠️ Hugging Face API Key is missing in .eop_config.{RESET}")
+        print(f"You can get your free access token here: {CYAN}https://huggingface.co/settings/tokens{RESET}")
+        token = input(f"Please paste your HF_API_KEY to continue: ").strip()
+        
+        if token:
+            config["HF_API_KEY"] = token
+            save_config(config)
+            print(f"{GREEN}✅ HF_API_KEY saved securely to .eop_config!{RESET}\n")
+        else:
+            print(f"{RED}No token provided. Hugging Face downloads will fail.{RESET}\n")
+            return False
+            
+    try:
+        from huggingface_hub import login
+        login(token=token)
+        return True
+    except ImportError:
+        print(f"{RED}❌ Missing dependency. Please run: pip install huggingface_hub tqdm{RESET}")
+        return False
+
+def check_kg_token():
+    config = load_config()
+    username = config.get("KG_USERNAME", "")
+    api_key = config.get("KG_API_KEY", "")
+    
+    if not username or not api_key:
+        print(f"\n{YELLOW}⚠️ Kaggle Credentials are missing in .eop_config.{RESET}")
+        print(f"Get them by going to {CYAN}https://www.kaggle.com/settings{RESET} and clicking 'Create New Token'.")
+        
+        username = input(f"Please paste your Kaggle Username: ").strip()
+        api_key = input(f"Please paste your Kaggle Key: ").strip()
+        
+        if username and api_key:
+            config["KG_USERNAME"] = username
+            config["KG_API_KEY"] = api_key
+            save_config(config)
+            print(f"{GREEN}✅ Kaggle credentials saved securely to .eop_config!{RESET}\n")
+        else:
+            print(f"{RED}Credentials not provided. Kaggle downloads will fail.{RESET}\n")
+            return False
+            
+    os.environ['KAGGLE_USERNAME'] = username
+    os.environ['KAGGLE_KEY'] = api_key
+    return True
+
+#* ─────────────────────────────────────────────────────────────────
 #* SPATIO-TEMPORAL DATASET REGISTRY
 #* ─────────────────────────────────────────────────────────────────
 DATASETS = {
     #! VIDEO DATASETS (Temporal / Kinematic LSTM)
-    "CK+": {"type": "video", "public": False, "default": True, "auth_url": "http://www.pitt.edu/~emotion/ck-spread.htm", "desc": "Extended Cohn-Kanade"},
-    "RAVDESS": {"type": "video", "public": True, "default": True, "url": "https://zenodo.org/record/1188976/files/Video_Speech_Actor_01.zip", "desc": "Ryerson Audio-Visual Database"},
-    "AFEW": {"type": "video", "public": False, "default": True, "auth_url": "https://cs.anu.edu.au/few/", "desc": "Acted Facial Expressions in the Wild"},
+    "CK+": {"type": "video", "public": False, "default": True, "source": "direct", "auth_url": "http://www.pitt.edu/~emotion/ck-spread.htm", "desc": "Extended Cohn-Kanade"},
+    "RAVDESS": {"type": "video", "public": True, "default": True, "source": "direct", "url": "https://zenodo.org/record/1188976/files/Video_Speech_Actor_01.zip", "desc": "Ryerson Audio-Visual Database"},
+    "AFEW": {"type": "video", "public": False, "default": True, "source": "direct", "auth_url": "https://cs.anu.edu.au/few/", "desc": "Acted Facial Expressions in the Wild"},
     
-    "CREMA-D": {"type": "video", "public": True, "default": False, "url": "https://github.com/CheyneyComputerScience/CREMA-D/archive/refs/heads/master.zip", "desc": "Crowd-sourced Emotional Mutimodal"},
-    "eNTERFACE05": {"type": "video", "public": True, "default": False, "url": "https://enterface.net/enterface05/docs/results/databases/project2_database.zip", "desc": "Audio-Visual Emotion Database"},
-    "MELD": {"type": "video", "public": True, "default": False, "url": "http://web.eecs.umich.edu/~mihalcea/downloads/MELD.Raw.tar.gz", "desc": "Multimodal EmotionLines Dataset (Friends TV Show)"},
+    "CREMA-D": {"type": "video", "public": True, "default": False, "source": "direct", "url": "https://github.com/CheyneyComputerScience/CREMA-D/archive/refs/heads/master.zip", "desc": "Crowd-sourced Emotional Mutimodal"},
+    "eNTERFACE05": {"type": "video", "public": True, "default": False, "source": "direct", "url": "https://enterface.net/enterface05/docs/results/databases/project2_database.zip", "desc": "Audio-Visual Emotion Database"},
+    "MELD": {"type": "video", "public": True, "default": False, "source": "direct", "url": "http://web.eecs.umich.edu/~mihalcea/downloads/MELD.Raw.tar.gz", "desc": "Multimodal EmotionLines Dataset (Friends TV Show)"},
     
-    "SAVEE": {"type": "video", "public": False, "default": False, "auth_url": "http://kahlan.eps.surrey.ac.uk/savee/Download.html", "desc": "Surrey Audio-Visual Expressed Emotion"}, 
-    "IEMOCAP": {"type": "video", "public": False, "default": False, "auth_url": "https://sail.usc.edu/iemocap/", "desc": "Interactive Emotional Dyadic Motion Capture"},
+    "SAVEE": {"type": "video", "public": False, "default": False, "source": "direct", "auth_url": "http://kahlan.eps.surrey.ac.uk/savee/Download.html", "desc": "Surrey Audio-Visual Expressed Emotion"}, 
+    "IEMOCAP": {"type": "video", "public": False, "default": False, "source": "direct", "auth_url": "https://sail.usc.edu/iemocap/", "desc": "Interactive Emotional Dyadic Motion Capture"},
+    
+    "Video-Emotion": {"type": "video", "public": True, "default": False, "source": "kaggle", "repo_id": "unidpro/video-emotion-recognition-dataset", "desc": "Video Emotion Recognition Dataset [Kaggle]"},
 
     #! IMAGE DATASETS (Static / MobileNetV2 CNN)
-    "JAFFE": {"type": "image", "public": True, "default": True, "url": "https://zenodo.org/records/14974867/files/jaffe.zip", "desc": "Japanese Female Facial Expression Dataset"},
-    "EED": {"type": "image", "public": True, "default": True, "url": "https://zenodo.org/records/18012300/files/EED.zip", "desc": "Emotional Engagement Dataset (Students)"},
-    "AR-Face": {"type": "image", "public": True, "default": True, "url": "https://zenodo.org/records/19683234/files/ARDB_Full.zip", "desc": "AR Face Database (Illumination & Expression)"},
-    "FER-2013": {"type": "image", "public": False, "default": False, "auth_url": "https://www.kaggle.com/c/challenges-in-representation-learning-facial-expression-recognition-challenge/data", "desc": "Facial Expression Recognition 2013 (Kaggle)"},
-    "AffectNet": {"type": "image", "public": False, "default": False, "auth_url": "http://mohammadmahoor.com/affectnet/", "desc": "Large-scale Database of Facial Expressions in the Wild"},
-    "RAF-DB": {"type": "image", "public": False, "default": False, "auth_url": "http://www.whdeng.cn/raf/model1.html", "desc": "Real-world Affective Faces Database"},
-    "SFEW": {"type": "image", "public": False, "default": False, "auth_url": "https://cs.anu.edu.au/few/", "desc": "Static Facial Expressions in the Wild"},
-    "KDEF": {"type": "image", "public": False, "default": False, "auth_url": "https://www.kdef.se/", "desc": "Karolinska Directed Emotional Faces"},
-    "Oulu-CASIA": {"type": "image", "public": False, "default": False, "auth_url": "http://www.cse.oulu.fi/CMV/Downloads/Oulu-CASIA", "desc": "Oulu-CASIA NIR VIS Database"},
-    "FACES": {"type": "image", "public": False, "default": False, "auth_url": "https://faces.mpdl.mpg.de/", "desc": "Max Planck FACES Database"}
+    "JAFFE": {"type": "image", "public": True, "default": True, "source": "direct", "url": "https://zenodo.org/records/14974867/files/jaffe.zip", "desc": "Japanese Female Facial Expression Dataset"},
+    "EED": {"type": "image", "public": True, "default": True, "source": "direct", "url": "https://zenodo.org/records/18012300/files/EED.zip", "desc": "Emotional Engagement Dataset (Students)"},
+    "AR-Face": {"type": "image", "public": True, "default": True, "source": "direct", "url": "https://zenodo.org/records/19683234/files/ARDB_Full.zip", "desc": "AR Face Database (Illumination & Expression)"},
+    "FER-2013": {"type": "image", "public": False, "default": False, "source": "direct", "auth_url": "https://www.kaggle.com/c/challenges-in-representation-learning-facial-expression-recognition-challenge/data", "desc": "Facial Expression Recognition 2013 (Kaggle)"},
+    "AffectNet": {"type": "image", "public": False, "default": False, "source": "direct", "auth_url": "http://mohammadmahoor.com/affectnet/", "desc": "Large-scale Database of Facial Expressions in the Wild"},
+    "RAF-DB": {"type": "image", "public": False, "default": False, "source": "direct", "auth_url": "http://www.whdeng.cn/raf/model1.html", "desc": "Real-world Affective Faces Database"},
+    "SFEW": {"type": "image", "public": False, "default": False, "source": "direct", "auth_url": "https://cs.anu.edu.au/few/", "desc": "Static Facial Expressions in the Wild"},
+    "KDEF": {"type": "image", "public": False, "default": False, "source": "direct", "auth_url": "https://www.kdef.se/", "desc": "Karolinska Directed Emotional Faces"},
+    "Oulu-CASIA": {"type": "image", "public": False, "default": False, "source": "direct", "auth_url": "http://www.cse.oulu.fi/CMV/Downloads/Oulu-CASIA", "desc": "Oulu-CASIA NIR VIS Database"},
+    "FACES": {"type": "image", "public": False, "default": False, "source": "direct", "auth_url": "https://faces.mpdl.mpg.de/", "desc": "Max Planck FACES Database"},
+    
+    "FER2025": {"type": "image", "public": True, "default": False, "source": "huggingface", "repo_id": "imadhavan/FER2025", "desc": "Facial Expression Recognition 2025 [Hugging Face]"}
 }
 
 #* ─────────────────────────────────────────────────────────────────
@@ -112,13 +201,72 @@ def progress_bar(block_num, block_size, total_size):
         sys.stdout.write(f'\r    ↳ Downloading... ({dl_mb:.1f} MB)')
         sys.stdout.flush()
 
+#* ─────────────────────────────────────────────────────────────────
+#* PLATFORM SPECIFIC DOWNLOADERS & ZIP PIPELINE
+#* ─────────────────────────────────────────────────────────────────
 def download_file(url, dest_path):
-    print(f"Downloading from: {url}")
+    print(f"Downloading from direct URL: {url}")
     try:
         urllib.request.urlretrieve(url, dest_path, reporthook=progress_bar)
         print(f"\n{GREEN}✅ Successfully saved to: {dest_path}{RESET}\n")
     except Exception as e:
         print(f"\n{RED}❌ Failed to download. Error: {e}{RESET}\n")
+
+def download_from_huggingface(dataset_link, item_name, dest_dir):
+    print(f"Connecting to Hugging Face API for: {dataset_link}")
+    if not check_hf_token():
+        return
+        
+    temp_dataset_dir = os.path.join(TEMP_DIR, item_name)
+    os.makedirs(temp_dataset_dir, exist_ok=True)
+    
+    try:
+        from huggingface_hub import snapshot_download
+        print(f"{CYAN}Downloading raw dataset files... (Progress bar mapped via tqdm){RESET}")
+        snapshot_download(repo_id=dataset_link, repo_type="dataset", local_dir=temp_dataset_dir)
+        
+        print(f"\n{YELLOW}Archiving dataset into ZIP format...{RESET}")
+        zip_base_path = os.path.join(dest_dir, item_name) # shutil adds .zip automatically
+        shutil.make_archive(zip_base_path, 'zip', temp_dataset_dir)
+        
+        # Immediate cleanup
+        shutil.rmtree(temp_dataset_dir)
+        print(f"{GREEN}✅ Successfully synced, zipped, and cleaned temp files! -> {zip_base_path}.zip{RESET}\n")
+        
+    except ImportError:
+        print(f"\n{RED}❌ Missing dependencies. Run: pip install huggingface_hub tqdm{RESET}\n")
+    except Exception as e:
+        print(f"\n{RED}❌ Hugging Face API download failed. Error: {e}{RESET}\n")
+
+def download_from_kaggle(dataset_link, item_name, dest_dir):
+    print(f"Connecting to Kaggle API for: {dataset_link}")
+    if not check_kg_token():
+        return
+        
+    temp_dataset_dir = os.path.join(TEMP_DIR, item_name)
+    os.makedirs(temp_dataset_dir, exist_ok=True)
+        
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+        api = KaggleApi()
+        api.authenticate()
+        
+        print(f"{CYAN}Downloading and extracting raw dataset files... (Progress bar mapped via tqdm){RESET}")
+        # quiet=False enforces the native Kaggle tqdm progress bar
+        api.dataset_download_files(dataset=dataset_link, path=temp_dataset_dir, unzip=True, quiet=False)
+        
+        print(f"\n{YELLOW}Archiving dataset into ZIP format...{RESET}")
+        zip_base_path = os.path.join(dest_dir, item_name) # shutil adds .zip automatically
+        shutil.make_archive(zip_base_path, 'zip', temp_dataset_dir)
+        
+        # Immediate cleanup
+        shutil.rmtree(temp_dataset_dir)
+        print(f"{GREEN}✅ Successfully downloaded, zipped, and cleaned temp files! -> {zip_base_path}.zip{RESET}\n")
+        
+    except ImportError:
+        print(f"\n{RED}❌ Kaggle library missing. Run: pip install kaggle tqdm{RESET}\n")
+    except Exception as e:
+        print(f"\n{RED}❌ Kaggle API failed. Error: {e}{RESET}\n")
 
 def process_downloads(datasets_to_download, interactive=True):
     for item in datasets_to_download:
@@ -136,6 +284,16 @@ def process_downloads(datasets_to_download, interactive=True):
 
         print(f"\n--- Fetching {item} [{info['type'].upper()}] ---")
         
+        # API Routes (Triggering Temp -> Zip Pipeline)
+        if info.get("source") == "huggingface":
+            download_from_huggingface(info["repo_id"], item, target_dir)
+            continue
+            
+        elif info.get("source") == "kaggle":
+            download_from_kaggle(info["repo_id"], item, target_dir)
+            continue
+        
+        # Direct URL Routing
         if info["public"]:
             url = info["url"]
         else:
@@ -160,7 +318,6 @@ def process_downloads(datasets_to_download, interactive=True):
                         save_private_url(item, url)
                         print(f"{GREEN}Updated saved link for {item}.{RESET}")
                 else:
-                    #* 1. CUSTOM PROMPTS FOR AFEW AND SFEW FOLDER SHARING LINKS
                     if item == "AFEW":
                         print(f"{YELLOW}👉 Please paste the share link for the folder called 'Train_AFEW' or similar (found inside the AFEW cloud directory).{RESET}")
                     elif item == "SFEW":
@@ -185,11 +342,9 @@ def process_downloads(datasets_to_download, interactive=True):
         extension = "tar.gz" if "tar.gz" in url else url.split('.')[-1]
         if len(extension) > 4 or "/" in extension: extension = "zip" 
             
-        #* 2. RENAME INCOMING ZIP FILES BASED ON SOURCE FOLDER NOMENCLATURE
         dest_path = os.path.join(target_dir, f"{item}.{extension}")
         download_file(url, dest_path)
         
-        # Check if cloud provider downloaded it matching the specific remote subfolder name, then normalize it
         potential_train_path = os.path.join(target_dir, f"Train.{extension}")
         potential_afew_train_path = os.path.join(target_dir, f"Train_AFEW.{extension}")
         potential_lowercase_afew_path = os.path.join(target_dir, f"train_AFEW.{extension}")
@@ -247,28 +402,37 @@ def menu_download_defaults(modality):
 def format_col_item(name, category):
     installed = is_installed(name)
     info = DATASETS[name]
+    
+    api_tag = ""
+    if info.get("source") == "huggingface":
+        api_tag = " | HF"
+    elif info.get("source") == "kaggle":
+        api_tag = " | Kaggle"
+        
     restriction = "Pub" if info["public"] else "Res"
+    status = "Installed" if installed else "Missing"
+    full_status = f"[{restriction}{api_tag} | {status}]"
     
     if category == "default":
-        return f"{GREEN if installed else CYAN}{name} [{restriction} | {'Installed' if installed else 'Missing'}]{RESET}"
+        return f"{GREEN if installed else CYAN}{name} {full_status}{RESET}"
     else:
         color = GREEN if installed else (YELLOW if info["public"] else RED)
-        return f"{color}{name} [{'Installed' if installed else 'Missing'}]{RESET}"
+        return f"{color}{name} {full_status}{RESET}"
 
 def menu_browse(modality):
     while True:
         clear_screen()
-        print("\n" + "="*85)
-        print(f" BROWSE {modality.upper()} DATASETS ".center(85, "="))
-        print("="*85)
+        print("\n" + "="*110)
+        print(f" BROWSE {modality.upper()} DATASETS ".center(110, "="))
+        print("="*110)
         
         filtered = {k: v for k, v in DATASETS.items() if v["type"] == modality}
         defaults = [k for k, v in filtered.items() if v["default"]]
         publics = [k for k, v in filtered.items() if not v["default"] and v["public"]]
         restricteds = [k for k, v in filtered.items() if not v["default"] and not v["public"]]
         
-        print(f"{'DEFAULTS':<28} | {'PUBLIC':<28} | {'RESTRICTED':<28}")
-        print("-" * 85)
+        print(f"{'DEFAULTS':<35} | {'PUBLIC':<35} | {'RESTRICTED':<35}")
+        print("-" * 110)
         
         max_rows = max(len(defaults), len(publics), len(restricteds))
         
@@ -285,7 +449,7 @@ def menu_browse(modality):
                 visible_len = len(''.join([c for c in text.replace(GREEN,'').replace(YELLOW,'').replace(RED,'').replace(CYAN,'').replace(RESET,'')]))
                 return text + " " * max(0, visible_target - visible_len)
 
-            print(f"{pad_ansi(str1, 28)} | {pad_ansi(str2, 28)} | {str3}")
+            print(f"{pad_ansi(str1, 35)} | {pad_ansi(str2, 35)} | {str3}")
             
         print("\nOptions:")
         print("1. Install Defaults")
@@ -307,11 +471,16 @@ def menu_select_to_install(modality):
 
     for idx, name in enumerate(modality_datasets):
         info = DATASETS[name]
+        
+        api_tag = ""
+        if info.get("source") == "huggingface": api_tag = " | Hugging Face"
+        elif info.get("source") == "kaggle": api_tag = " | Kaggle"
+        
         restriction = "Pub" if info["public"] else "Res"
         color = GREEN if is_installed(name) else (YELLOW if info["public"] else RED)
         status = "Installed" if is_installed(name) else "Missing"
             
-        print(f"{idx + 1}. {color}{name} [{restriction} | {status}]{RESET}")
+        print(f"{idx + 1}. {color}{name} [{restriction}{api_tag} | {status}]{RESET}")
     
     choice = input(f"\nEnter numbers separated by commas (e.g., 1, 2) or {CYAN}0 to go back:{RESET} ").strip()
     if choice == '0': return
@@ -337,8 +506,13 @@ def menu_status(modality):
             break
             
         for idx, name in enumerate(installed):
-            restriction = "Pub" if DATASETS[name]["public"] else "Res"
-            print(f"{GREEN}{idx + 1}. {name} [{restriction}]{RESET}")
+            info = DATASETS[name]
+            api_tag = ""
+            if info.get("source") == "huggingface": api_tag = " | HF"
+            elif info.get("source") == "kaggle": api_tag = " | Kaggle"
+            
+            restriction = "Pub" if info["public"] else "Res"
+            print(f"{GREEN}{idx + 1}. {name} [{restriction}{api_tag}]{RESET}")
             
         print(f"\nTotal Installed: {len(installed)}/{total}")
         choice = input(f"Enter numbers to UNINSTALL or {CYAN}0 to go back.{RESET}\n{RED}Type -1 to delete all installed {modality} datasets.{RESET}\n> ").strip()

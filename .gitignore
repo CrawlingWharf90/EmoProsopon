@@ -33,3 +33,4 @@ Thumbs.db
 #? 6. Compiled Installers
 installers/Output/
 *.exe
+*.json

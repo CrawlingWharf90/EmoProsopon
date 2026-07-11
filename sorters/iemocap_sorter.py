@@ -10,6 +10,10 @@ EMOTION_MAP = {
     "neu": "Neutral", "sad": "Sad", "sur": "Surprise"
 }
 
+def get_prefix():
+    """The exact prefix this sorter writes onto every sorted filename."""
+    return "IEMOCAP"
+
 #! THEORETICAL SORTER: Assumes pre-split AVIs in dialog/avi/ and EmoEvaluation files
 UNPACK_DIR = os.path.join("unpkged_datasets", "IEMOCAP") 
 TARGET_DIR = "sorted_datasets" 
