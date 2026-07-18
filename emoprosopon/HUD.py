@@ -436,12 +436,22 @@ class HUDManager:
         else:
             occ_data = occ_data_list[self.view_tracker_idx]
             kin_data = kin_data_list[self.view_tracker_idx]
-            has_data = len(kin_data) > 0
+            
+            #? 1. Check for hidden HUD flags and actual data presence
+            is_unstable = kin_data.get("_is_unstable", False)
+            has_data = any(not k.startswith("_") for k in kin_data.keys())
             
             for name in self.regions:
-                if not has_data:
+                #? 2. Handle Tracking Disabled
+                if not self.track_kinematics and self.active_tab == "Kinematics":
+                    cv2.putText(frame, f"{name}: Tracking Disabled", (x0 + 20, y-2), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1, cv2.LINE_AA)
+                
+                #? 3. Handle Missing Face
+                elif not has_data:
                     cv2.putText(frame, f"{name}: No Face Detected", (x0 + 20, y-2), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.35, (80, 80, 255), 1, cv2.LINE_AA)
+                
                 else:
                     occ = occ_data.get(name, False)
                     if self.active_tab == "Occlusion":
@@ -450,9 +460,17 @@ class HUDManager:
                         cv2.putText(frame, f"{name}: {'OCCLUDED' if occ else 'visible'}", (x0 + 35, y), 
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1, cv2.LINE_AA)
                     else: 
+                        #? 4. Handle Occlusion
                         if occ:
                             cv2.putText(frame, f"{name}: Paused (Occluded)", (x0 + 20, y-2), 
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.35, (80, 80, 255), 1, cv2.LINE_AA)
+                        
+                        #? 5. Handle High Entropy (Chaotic Movement)
+                        elif is_unstable:
+                            cv2.putText(frame, f"{name}: High Entropy", (x0 + 20, y-2), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 165, 255), 1, cv2.LINE_AA) # Orange text
+                        
+                        #? 6. Normal Kinematic Bars
                         else:
                             val = kin_data.get(name, 0.0)
                             abs_val = min(abs(val), 1.0)
@@ -467,9 +485,15 @@ class HUDManager:
             #* Add Kinematic Output to Bottom of Tab
             if self.active_tab == "Kinematics":
                 k_emo, k_conf = kin_preds_list[self.view_tracker_idx]
-                col = (0, 255, 100) if self.track_kinematics else (100, 100, 100)
                 y = h - 60
-                cv2.putText(frame, f"Kinematic Emotion: {k_emo} ({k_conf:.1f}%)", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1, cv2.LINE_AA)
+                
+                #? Handle Overall Emotion Status Readouts
+                if not self.track_kinematics:
+                    cv2.putText(frame, "Kinematic Emotion: DISABLED", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 100), 1, cv2.LINE_AA)
+                elif is_unstable:
+                    cv2.putText(frame, "Kinematic Emotion: HIGH ENTROPY", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1, cv2.LINE_AA)
+                else:
+                    cv2.putText(frame, f"Kinematic Emotion: {k_emo} ({k_conf:.1f}%)", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 100), 1, cv2.LINE_AA)
 
         self._draw_bento_icon(frame, h, w)
         

@@ -3,12 +3,21 @@ from collections import deque
 
 class KinematicManager:
     def __init__(self, regions, buffer_size=10):
+        self.regions = regions
         self.activity = {r: 0.0 for r in regions}
         self.history = {r: deque(maxlen=buffer_size) for r in regions}
         
         self.prev_yaw = 0.5 
         self.current_yaw_penalty = 0.0
         
+        #? Entropy Tracking
+        self.entropy_scores = {r: 0.0 for r in regions}
+        self.is_unstable = False 
+        
+        self.ENTROPY_THRESHOLD = 0.002 
+
+        self.CRITICAL_MASS_RATIO = 0.3 
+
         #! These regions physically move "Down", so we invert them to show contrast
         self.invert_regions = ["Lower Lip", "Jaw Line", "Nose Tip", "Left Cheek", "Right Cheek"]
 
@@ -51,27 +60,31 @@ class KinematicManager:
     def update(self, rname, local_points_list):
         if not local_points_list:
             self.activity[rname] = 0.0
+            self.entropy_scores[rname] = 0.0
             return
 
         avg_signature = np.mean(local_points_list, axis=0)
         self.history[rname].append(avg_signature)
 
         if len(self.history[rname]) == self.history[rname].maxlen:
+            
+            #* 1. Calculate Entropy (Variance/Volatility of the history buffer)
+            history_array = np.array(self.history[rname])
+            volatility = np.std(history_array, axis=0) 
+            entropy = np.mean(volatility) 
+            self.entropy_scores[rname] = entropy
+                
+            #* 2. Calculate Standard Tracking
             start_sig = self.history[rname][0]
             current_sig = self.history[rname][-1]
             
-            #* 1. Calculate the True Magnitude (High Sensitivity restored)
             movement_magnitude = np.linalg.norm(current_sig - start_sig)
             
-            #* 2. Calculate the Direction (+ or -)
-            #? If current distances are LARGER, the mean is negative (Expanding)
             direction = np.sign(np.mean(start_sig - current_sig))
             if direction == 0: direction = 1.0
             
-            #* 3. Combine them
             signed_movement = movement_magnitude * direction
             
-            #* 4. Invert the lower face
             if rname in self.invert_regions:
                 signed_movement *= -1.0
             
@@ -91,3 +104,27 @@ class KinematicManager:
             
             clamped_val = np.clip(activity * 15.0, -1.0, 1.0)
             self.activity[rname] = clamped_val
+
+    def check_global_entropy(self):
+        """
+        Calculates if the overall face is in a state of high entropy.
+        It does this by checking if a 'critical mass' of individual features
+        are experiencing high volatility simultaneously.
+        """
+        if not self.entropy_scores:
+            return False
+        
+        chaotic_regions = sum(1 for score in self.entropy_scores.values() if score > self.ENTROPY_THRESHOLD)
+
+        chaos_ratio = chaotic_regions / len(self.regions)
+
+        self.is_unstable = chaos_ratio >= self.CRITICAL_MASS_RATIO
+
+        ## print(f"[Kinematics] Entropy Check:\nregions: {len(self.regions)}, chaotic: {chaotic_regions}, ratio: {chaos_ratio:.2f}, unstable: {self.is_unstable}")
+        
+        if self.is_unstable:
+            ## print(f"[Kinematics] High Entropy Detected! Chaotic Regions: {chaotic_regions}/{len(self.regions)} (Ratio: {chaos_ratio:.2f})")
+            for rname in self.activity:
+                self.activity[rname] = 0.0
+                
+        return self.is_unstable

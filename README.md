@@ -8,13 +8,13 @@ EmoProsopon breaks away from traditional static image classification. Instead of
 
 ## Table of Contents
 
-1. [Getting Started](https://www.google.com/search?q=%23getting-started)
-2. [CLI Command Reference (eop)](https://www.google.com/search?q=%23cli-command-reference-eop)
-3. [Architecture & Developer Guide](https://www.google.com/search?q=%23architecture--developer-guide)
-* [emoprosopon/ (Core Engine)](https://www.google.com/search?q=%231-emoprosopon-core-engine)
-* [downloaders/ (IO & Managers)](https://www.google.com/search?q=%232-downloaders-io--managers)
-* [sorters/ (Dataset Normalization)](https://www.google.com/search?q=%233-sorters-dataset-normalization)
-* [trainers/ (ML Pipeline)](https://www.google.com/search?q=%234-trainers-ml-pipeline)
+1. [Getting Started](#getting-started)
+2. [CLI Command Reference (eop)](#cli-command-reference-eop)
+3. [Architecture & Developer Guide](#architecture--developer-guide)
+* [emoprosopon/ (Core Engine)](#1-emoprosopon-core-engine)
+* [downloaders/ (IO & Managers)](#2-downloaders-io--managers)
+* [sorters/ (Dataset Normalization)](#3-sorters-dataset-normalization)
+* [trainers/ (ML Pipeline)](#4-trainers-ml-pipeline)
 
 
 4. [Licensing](https://www.google.com/search?q=%23licensing)
@@ -54,12 +54,12 @@ The `eop` command is your master orchestrator. It handles environment configurat
 ### Core Commands
 
 | Command | Short Flag | Description |
-| --- | --- | --- |
+| :--- | :--- | :--- |
 | `eop --start` | `-s` | **Launch the main engine GUI.** Opens the launcher to select your input source (Camera, Video, or Screen). Requires pip dependencies and core models. |
 | `eop --setup` | `-g` | **Run the first-time setup wizard.** Guides you through installing dependencies, downloading core models, and optionally fetching training datasets. |
 | `eop --require` | `-r` | **Install Python dependencies.** Reads from `downloaders/requirements.txt` to install necessary packages (OpenCV, MediaPipe, PyTorch, etc.). |
 | `eop --tui <target>` | `-t` | **Open an interactive TUI manager.** Replace `<target>` with `models`, `datasets`, or `extractor` to open the respective Terminal User Interface. |
-| `eop --train [target]` | `-n` | **Run ML training pipeline.** Runs both harvesting and LSTM training sequentially. Optionally provide `harvest` or `model` to run only one specific stage. |
+| `eop --train [target]` | `-n` | **Run ML training pipeline.** Runs both harvesting and training sequentially. See arguments below for targeting specific modalities (Static/Kinematic). |
 | `eop --update` | `-u` | **Check for updates.** Pings GitHub for the latest release and installs it. |
 | `eop --uninstall` | `-un` | **Launch Uninstaller.** Opens the uninstaller GUI for your OS. |
 | `eop --installer` | `-i` | **Launch Installer.** Opens the installer GUI. |
@@ -70,23 +70,28 @@ The `eop` command is your master orchestrator. It handles environment configurat
 
 For advanced users, you can bypass the GUI menu entirely and jump straight into tracking by appending these arguments to the `--start` command:
 
-* `eop --start live` : Bypass the menu and launch directly into live camera mode.
-* `eop --start video [forward=True/False] [path="..."]` : Bypass the menu and analyze a video file.
-* `forward`: If `False`, cleanly quits the app when the video ends (Default: `True`, which returns to the menu).
-* `path`: Direct path to the video file to skip the OS file picker (supports `.mp4`, `.avi`, `.mov`, `.mkv`).
+*   `eop --start live` : Bypass the menu and launch directly into live camera mode.
+*   `eop --start video [forward=True/False] [path="..."]` : Bypass the menu and analyze a video file.
+    *   `forward`: If `False`, cleanly quits the app when the video ends (Default: `True`, which returns to the menu).
+    *   `path`: Direct path to the video file to skip the OS file picker.
+*   `eop --start screen <index>` : Bypass the menu and capture a specific monitor by index (e.g., `eop -s screen 1`).
 
+### Training Pipeline Arguments
 
-* `eop --start screen <index>` : Bypass the menu and capture a specific monitor by index (e.g., `eop -s screen 1`).
+The `--train` command supports specific sub-targets and modality flags. 
+Format: `eop --train <target> <modality>`
 
-### Advanced / Automation Commands
+**Targets:**
+*   `all` : (Default) Run harvester, then immediately train the models.
+*   `harvest` : Extract kinematics arrays and/or pre-crop static images.
+*   `model` : Train the neural networks on the harvested data.
 
-Use these commands for quick, non-interactive execution. Ideal for CI/CD, automation, or advanced users bypassing the TUIs.
+**Modalities:**
+*   `-s` / `--static` : Process and train only Image datasets (Static CNN).
+*   `-k` / `--kinematic` : Process and train only Video datasets (Kinematic LSTM).
+*   `-b` / `--both` : Process and train both data streams sequentially (Default).
 
-* `eop --models --auto` : Download all missing Core AI models automatically.
-* `eop --datasets <list>` : Download specific datasets (e.g., `eop --datasets CK+,MUG`).
-* `eop --extractor --extract <list>` : Unpack specific downloaded datasets.
-* `eop --extractor --sort <list>` : Run the dedicated sorter scripts on specific unpacked datasets.
-* `eop --extractor --syd <list>` : **Extract and Sort.** Automatically performs both extraction and sorting on the provided datasets.
+*Example: `eop -n harvest --static` will only run the Face Pre-Cropper for the image datasets.*
 
 ---
 

@@ -42,6 +42,8 @@ import time
 import threading
 import numpy as np
 import torch 
+import statistics
+import argparse
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(BASE_DIR)
@@ -57,6 +59,8 @@ from static_cnn import StaticFeatureExtractor, get_face_transform
 BaseOptions = mp.tasks.BaseOptions
 VisionRunningMode = mp.tasks.vision.RunningMode
 
+CLASS_NAMES = ["Neutral", "Happy", "Sad", "Angry", "Fear", "Surprise", "Disgust"]
+
 hand_options = mp.tasks.vision.HandLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=os.path.join(BASE_DIR, 'models', 'hand_landmarker.task')),
     running_mode=VisionRunningMode.VIDEO,
@@ -70,6 +74,17 @@ segmenter_options = mp.tasks.vision.ImageSegmenterOptions(
 
 panic_mode = False
 model_loaded = False
+
+fps_history = []
+kinematic_predictions = {}
+static_predictions = {}
+
+global_fused_dict = {}
+
+static_history = []
+
+frame_count = 0
+start_time = time.time()
 
 FEATURE_ORDER = [
     "Right Eyebrow", "Left Eyebrow", "Right Eye", "Left Eye", 
@@ -107,6 +122,12 @@ YUNET_MODEL_PATH = os.path.join(BASE_DIR, 'models', 'face_detection_yunet_2023ma
 
 landmark_histories = {}
 
+#* ─────────────────────────────────────────────────────────────────
+#* Terminal Colors
+#* ─────────────────────────────────────────────────────────────────
+YELLOW = '\033[93m'
+RESET = '\033[0m'
+
 def segmenter_worker(segmenter):
     global shared_raw_mask, current_mp_image, app_running
     while app_running:
@@ -131,7 +152,7 @@ class GlobalLandmark:
 #* Main Engine Logic
 #* ─────────────────────────────────────────────────────────────────
 def run_tracker(source_type="camera", source_val=0):
-    global app_running, current_mp_image, landmark_histories, model_loaded, panic_mode
+    global app_running, current_mp_image, landmark_histories, model_loaded, panic_mode, frame_count
     app_running = True
     
     if not panic_mode:
@@ -181,7 +202,7 @@ def run_tracker(source_type="camera", source_val=0):
     if source_type in ["camera", "video"]: 
         cap = cv2.VideoCapture(source_val)
         if not cap.isOpened():
-            # Critical errors still print regardless of SILENT_MODE so the user knows why it crashed
+            #! Critical errors still print regardless of SILENT_MODE so the user knows why it crashed
             print(f"\n❌ CRITICAL: Could not read from camera index {source_val}.")
             print("Troubleshooting:")
             print("1. Is another application (Zoom, OBS, Discord) currently using your webcam?")
@@ -257,6 +278,8 @@ def run_tracker(source_type="camera", source_val=0):
         now = time.time()
         fps = 1 / (max(now - pTime, 0.001))
         pTime = now
+
+        frame_count += 1
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).copy()
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
@@ -374,10 +397,14 @@ def run_tracker(source_type="camera", source_val=0):
                         if occ_results:
                             current_occ[rname] = (sum(occ_results)/len(occ_results) > 0.5)
                         
-                        if not current_occ[rname]: kin_engine.update(rname, valid_pts)
+                        if not current_occ[rname]: 
+                            kin_engine.update(rname, valid_pts)
+                            kin_engine.check_global_entropy()
                         else:
                             kin_engine.activity[rname] = 0.0
                             kin_engine.history[rname].clear() 
+
+                        
 
                     all_occ_data[t_idx] = current_occ.copy()
                     all_kin_data[t_idx] = kin_engine.activity.copy()
@@ -407,7 +434,20 @@ def run_tracker(source_type="camera", source_val=0):
                             static_crop=static_crop, 
                             alpha=0.6 
                         )
+
+                        f_emo = CLASS_NAMES[f_idx] if f_idx >= 0 else "Unknown"
+                        k_emo = CLASS_NAMES[k_idx] if k_idx >= 0 else "Unknown"
+                        s_emo = CLASS_NAMES[s_idx] if s_idx >= 0 else "Unknown"
+
+                        kinematic_predictions[t_idx] = (k_emo, k_conf)
+                        static_predictions[t_idx] = (s_emo, s_conf)
+                        global_fused_dict[stable_id] = (f_emo, f_conf)
                         
+                        static_history.append(s_emo)
+
+                        if len(static_history) > 30:
+                            static_history.pop(0)
+
                         if kin_data_to_pass is not None:
                             hud_kin_preds[t_idx] = (EMOTION_MAP_REV.get(k_idx, "Unknown"), k_conf)
                         else:
@@ -450,8 +490,17 @@ def run_tracker(source_type="camera", source_val=0):
         else:
             if hud.handle_input(key): break
             hud.draw(frame, h, w, fps, all_occ_data, all_kin_data, detected_face_count, hud_kin_preds, hud_static_preds, global_fused_emotions) 
-
-        cv2.imshow('EmoProsopopon', frame)
+            
+        if len(static_history) == 30:
+            try:
+                mode_emo = statistics.mode(static_history)
+            except statistics.StatisticsError:
+                mode_emo = "Tie" 
+            
+            start_f = max(1, frame_count - 29)
+            print(f"Frame {start_f}-{frame_count} {static_history} - {YELLOW}Median:{RESET} {mode_emo}")
+        
+        cv2.imshow("EmoProsopopon", frame)
         if not panic_mode: 
             cv2.setMouseCallback('EmoProsopopon', lambda event, x, y, flags, param: param.handle_click(x, y)
             if event == cv2.EVENT_LBUTTONDOWN else None, param=hud)
