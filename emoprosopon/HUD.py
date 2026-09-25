@@ -25,6 +25,7 @@ class HUDManager:
         self.max_trackers = 1            
         self.track_kinematics = True
         self.track_static = True
+        self.median_mode = False
         self.show_face_labels = True
         self.show_detected_emotion = True
         self.show_face_counter = True
@@ -68,6 +69,7 @@ class HUDManager:
                     self.max_trackers = settings.get("max_trackers", self.max_trackers)
                     self.track_kinematics = settings.get("track_kinematics", self.track_kinematics)
                     self.track_static = settings.get("track_static", self.track_static)
+                    self.median_mode = settings.get("median_mode", self.median_mode)
                     self.show_face_labels = settings.get("show_face_labels", self.show_face_labels)
                     self.show_detected_emotion = settings.get("show_detected_emotion", self.show_detected_emotion)
                     self.show_face_counter = settings.get("show_face_counter", self.show_face_counter)
@@ -91,6 +93,7 @@ class HUDManager:
             "max_trackers": self.max_trackers,
             "track_kinematics": self.track_kinematics,
             "track_static": self.track_static,
+            "median_mode": self.median_mode,
             "show_face_labels": self.show_face_labels,
             "show_detected_emotion": self.show_detected_emotion,
             "show_face_counter": self.show_face_counter,
@@ -147,6 +150,9 @@ class HUDManager:
                     needs_save = True
                 elif action == "toggle_track_static": 
                     self.track_static = not self.track_static
+                    needs_save = True
+                elif action == "toggle_median_mode": 
+                    self.median_mode = not self.median_mode
                     needs_save = True
                 elif action == "toggle_show_labels": 
                     self.show_face_labels = not self.show_face_labels
@@ -378,12 +384,21 @@ class HUDManager:
                 
             y += 10
             
-            #* TRACKING TYPE SECTION
-            cv2.putText(frame, "- Tracking Type -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
+            #* KINEMATIC TRACKING SETTINGS
+            cv2.putText(frame, "- Kinematic Tracking Settings -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
             y += 30
             self._draw_toggle(frame, x0 + 20, y, "Track Kinematics (LSTM):", self.track_kinematics, "toggle_track_kinematics")
-            y += 30 
+            y += 40 
+            
+            #* STATIC TRACKING SETTINGS
+            cv2.putText(frame, "- Static Tracking Settings -", (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150,150,150), 1)
+            y += 30
             self._draw_toggle(frame, x0 + 20, y, "Track Static (CNN):", self.track_static, "toggle_track_static")
+            y += 30
+            
+            #! Disable median mode toggle if static tracking is off or models are missing
+            median_disabled = not (self.track_static and self.model_loaded)
+            self._draw_toggle(frame, x0 + 20, y, "Median Mode (30 FPS Window):", self.median_mode, "toggle_median_mode", disabled=median_disabled)
             y += 40
             
             #* OVERLAYS SECTION

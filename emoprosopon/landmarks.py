@@ -1,6 +1,16 @@
 import os
 import sys
 import logging
+import collections
+
+#* ─────────────────────────────────────────────────────────────────
+#* Terminal Colors
+#* ─────────────────────────────────────────────────────────────────
+GREEN = '\033[92m'
+YELLOW = '\033[93m'
+RED = '\033[91m'
+CYAN = '\033[96m'
+RESET = '\033[0m'
 
 #* ─────────────────────────────────────────────────────────────────
 #* MUTE C++ TENSORFLOW, GLOG, & ABSEIL WARNINGS
@@ -80,8 +90,6 @@ kinematic_predictions = {}
 static_predictions = {}
 
 global_fused_dict = {}
-
-static_history = []
 
 frame_count = 0
 start_time = time.time()
@@ -194,6 +202,7 @@ def run_tracker(source_type="camera", source_val=0):
     EMOTION_MAP_REV = {-1: "Scanning", 0: "Neutral", 1: "Happy", 2: "Sad", 3: "Angry", 4: "Fear", 5: "Surprise", 6: "Disgust"}
     
     sequence_buffers = {i: [] for i in range(MAX_POSSIBLE_TRACKERS)}
+    static_emotion_history = {i: collections.deque(maxlen=30) for i in range(MAX_POSSIBLE_TRACKERS)}
     
     cap = None
     sct = None
@@ -235,7 +244,14 @@ def run_tracker(source_type="camera", source_val=0):
     
     threading.Thread(target=segmenter_worker, args=(segmenter,), daemon=True).start()
     
-    if source_type in ["camera", "video"]: success, init_frame = cap.read()
+    if source_type in ["camera", "video"]: 
+        success, init_frame = cap.read()
+
+        if not success or init_frame is None:
+            print(f"\n{RED}Error: Could not read from camera index {source_val}.{RESET}")
+            print(f"{YELLOW}Please ensure your webcam is plugged in, not used by another app, and allowed in Windows Privacy settings.{RESET}")
+            cap.release()
+            return
     elif source_type == "screen":
         init_frame = np.array(sct.grab(monitor))
         init_frame = cv2.cvtColor(init_frame, cv2.COLOR_BGRA2BGR)
@@ -435,6 +451,15 @@ def run_tracker(source_type="camera", source_val=0):
                             alpha=0.6 
                         )
 
+                        if s_idx >= 0:
+                            static_emotion_history[t_idx].append(s_idx)
+                            
+                        if not panic_mode and getattr(hud, 'median_mode', False) and len(static_emotion_history[t_idx]) > 0:
+                            try:
+                                s_idx = int(statistics.mode(static_emotion_history[t_idx]))
+                            except statistics.StatisticsError:
+                                pass
+
                         f_emo = CLASS_NAMES[f_idx] if f_idx >= 0 else "Unknown"
                         k_emo = CLASS_NAMES[k_idx] if k_idx >= 0 else "Unknown"
                         s_emo = CLASS_NAMES[s_idx] if s_idx >= 0 else "Unknown"
@@ -442,11 +467,6 @@ def run_tracker(source_type="camera", source_val=0):
                         kinematic_predictions[t_idx] = (k_emo, k_conf)
                         static_predictions[t_idx] = (s_emo, s_conf)
                         global_fused_dict[stable_id] = (f_emo, f_conf)
-                        
-                        static_history.append(s_emo)
-
-                        if len(static_history) > 30:
-                            static_history.pop(0)
 
                         if kin_data_to_pass is not None:
                             hud_kin_preds[t_idx] = (EMOTION_MAP_REV.get(k_idx, "Unknown"), k_conf)
@@ -490,16 +510,24 @@ def run_tracker(source_type="camera", source_val=0):
         else:
             if hud.handle_input(key): break
             hud.draw(frame, h, w, fps, all_occ_data, all_kin_data, detected_face_count, hud_kin_preds, hud_static_preds, global_fused_emotions) 
-            
-        if len(static_history) == 30:
-            try:
-                mode_emo = statistics.mode(static_history)
-            except statistics.StatisticsError:
-                mode_emo = "Tie" 
-            
-            start_f = max(1, frame_count - 29)
-            print(f"Frame {start_f}-{frame_count} {static_history} - {YELLOW}Median:{RESET} {mode_emo}")
-        
+
+        #? Print the 30-frame window median to the terminal for active trackers
+        if not SILENT_MODE:
+            for t_idx in range(hud.max_trackers):
+                if len(static_emotion_history[t_idx]) == 30:
+                    # Convert the raw indices back to text labels for the console
+                    str_history = [CLASS_NAMES[idx] for idx in static_emotion_history[t_idx] if idx >= 0]
+                    
+                    if str_history:
+                        try:
+                            mode_emo = statistics.mode(str_history)
+                        except statistics.StatisticsError:
+                            mode_emo = "Tie" 
+                        
+                        start_f = max(1, frame_count - 29)
+                        tracker_lbl = f"[Tracker {t_idx + 1}] " if hud.max_trackers > 1 else ""
+                        print(f"{tracker_lbl}Frame {start_f}-{frame_count} {str_history} - {YELLOW}Median:{RESET} {mode_emo}")
+
         cv2.imshow("EmoProsopopon", frame)
         if not panic_mode: 
             cv2.setMouseCallback('EmoProsopopon', lambda event, x, y, flags, param: param.handle_click(x, y)

@@ -1,11 +1,11 @@
 [Setup]
 AppName=EmoProsopon
-AppVersion=1.0.0
+AppVersion=2.2.0
 ; Install into the user's local app data (no admin rights required)
 DefaultDirName={localappdata}\EmoProsopon
 DefaultGroupName=EmoProsopon
 OutputDir=.\Output
-OutputBaseFilename=EmoProsopon_Installer_v1.0
+OutputBaseFilename=EmoProsopon_Installer_v2.2.0
 Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=lowest

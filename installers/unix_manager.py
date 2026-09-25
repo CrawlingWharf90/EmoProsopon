@@ -58,7 +58,11 @@ class UnixManager(tk.Tk):
                 shutil.rmtree(INSTALL_DIR)
             
             # Copy everything except the installer GUI itself
-            shutil.copytree(REPO_ROOT, INSTALL_DIR, ignore=shutil.ignore_patterns('installers', '.vscode', '__pycache__'))
+            shutil.copytree(REPO_ROOT, INSTALL_DIR, ignore=shutil.ignore_patterns(
+                'installers', '.vscode', '__pycache__', '*.pyc', 
+                'dataset', 'unpkged_datasets', 'sorted_datasets', 
+                'processed_data', 'models', 'checkpoints'
+            ))
             
             os.chmod(os.path.join(INSTALL_DIR, "eop.py"), 0o755)
             

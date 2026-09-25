@@ -8,6 +8,8 @@ import tempfile
 import subprocess
 import time
 import re
+import threading
+import itertools
 
 #* ─────────────────────────────────────────────────────────────────
 #* CONSTANTS & HELPERS
@@ -46,6 +48,7 @@ COMMAND_TREE = [
     ]),
     CmdNode(["--tui", "-t"], "Launch a specific Terminal User Interface (TUI) tool.", sub_nodes=[
         CmdNode(["models"], "Manage Core AI weights (YuNet, MediaPipe, MobileNetV2...)."),
+        CmdNode(["checkpoints"], "Download pre-trained weights for the dual-stream engine."),
         CmdNode(["datasets"], "Browse and download research image/video databases."),
         CmdNode(["extractor"], "Unzip and normalize raw datasets into the /sorted_datasets directory.")
     ]),
@@ -71,6 +74,7 @@ COMMAND_TREE = [
     CmdNode(["--update", "-u"], "Check for and apply the latest updates."),
     CmdNode(["--uninstall", "-un"], "Launch the uninstaller GUI."),
     CmdNode(["--installer", "-i"], "Open the installer GUI."),
+    CmdNode(["--status", "-st"], "Display the current system readiness and dataset status."),
     CmdNode(["--version", "-v"], "Show installed version."),
     CmdNode(["--change-python", "-cp"], "Reconfigure Python interpreter.")
 ]
@@ -201,6 +205,26 @@ def run_installer(py_cmd):
         else:
             print(f"{RED}Unix manager script not found.{RESET}")
 
+def run_with_spinner(message, func, *args, **kwargs):
+    """Executes a function while rendering a 3 bouncing dots spinner."""
+    done = False
+    def spin():
+        for dots in itertools.cycle(['.  ', '.. ', '...', '   ']):
+            if done: break
+            sys.stdout.write(f"\r{message}{dots}")
+            sys.stdout.flush()
+            time.sleep(0.3)
+
+    t = threading.Thread(target=spin)
+    t.start()
+    try:
+        return func(*args, **kwargs)
+    finally:
+        done = True
+        t.join()
+        sys.stdout.write('\r' + ' ' * (len(message) + 10) + '\r')
+        sys.stdout.flush()
+
 def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
@@ -294,16 +318,28 @@ def check_pip_requirements(py_cmd):
         return False
 
 def check_models():
-    """Checks if all 4 required models exist."""
+    """Checks if all 5 required models exist."""
     models_dir = os.path.join(BASE_DIR, 'models')
     required = [
         "face_detection_yunet_2023mar.onnx",
         "face_landmarker.task",
         "hand_landmarker.task",
-        "selfie_multiclass_256x256.tflite"
+        "selfie_multiclass_256x256.tflite",
+        "static_projection_head_64d.pth"
     ]
     if not os.path.exists(models_dir): return 0
     found = sum(1 for m in required if os.path.exists(os.path.join(models_dir, m)))
+    return found
+
+def check_checkpoints():
+    """Checks if the 2 trained emotion checkpoints exist."""
+    checkpoints_dir = os.path.join(BASE_DIR, 'checkpoints')
+    required = [
+        "best_kinematic_model.pth",
+        "best_static_model.pth"
+    ]
+    if not os.path.exists(checkpoints_dir): return 0
+    found = sum(1 for m in required if os.path.exists(os.path.join(checkpoints_dir, m)))
     return found
 
 def ensure_tkinter(py_cmd):
@@ -395,27 +431,45 @@ def get_dataset_counts():
     dataset_dir = os.path.join(BASE_DIR, 'dataset')
     unpack_dir = os.path.join(BASE_DIR, 'unpkged_datasets')
     
-    dl_count = len([f for f in os.listdir(dataset_dir) if f.endswith('.zip') or f.endswith('.tar.gz')]) if os.path.exists(dataset_dir) else 0
-    ex_count = len([d for d in os.listdir(unpack_dir) if os.path.isdir(os.path.join(unpack_dir, d))]) if os.path.exists(unpack_dir) else 0
+    dl_count = 0
+    ex_count = 0
+    
+    for modality in ['image', 'video']:
+        mod_dl_dir = os.path.join(dataset_dir, modality)
+        mod_ex_dir = os.path.join(unpack_dir, modality)
+        
+        if os.path.exists(mod_dl_dir):
+            dl_count += len([f for f in os.listdir(mod_dl_dir) if f.endswith(('.zip', '.tar.gz'))])
+            
+        if os.path.exists(mod_ex_dir):
+            ex_count += len([d for d in os.listdir(mod_ex_dir) if os.path.isdir(os.path.join(mod_ex_dir, d))])
+            
     return dl_count, ex_count
+
+def gather_system_status(py_cmd):
+    """Bundles the slow diagnostic checks to be run inside the spinner."""
+    return check_pip_requirements(py_cmd), check_models(), check_checkpoints(), get_dataset_counts()
 
 def print_status(py_cmd):
     print("\n" + "="*50)
     print(" SYSTEM STATUS ".center(50, "="))
     print("="*50)
     
-    #? 1. Pip Requirements
-    pip_ok = check_pip_requirements(py_cmd)
+    pip_ok, models_found, chk_found, (dl_count, ex_count) = run_with_spinner(
+        f"{YELLOW}Evaluating system readiness{RESET}", 
+        gather_system_status, 
+        py_cmd
+    )
+    
     pip_str = f"[{GREEN}Completed{RESET}]" if pip_ok else f"[{RED}Missing{RESET}]"
     print(f"Pip Requirements:           {pip_str}")
     
-    #? 2. Models
-    models_found = check_models()
-    mod_str = f"[{GREEN}Completed{RESET}]" if models_found == 4 else f"[{RED}Missing ({models_found}/4){RESET}]"
+    mod_str = f"[{GREEN}Completed{RESET}]" if models_found == 5 else f"[{RED}Missing ({models_found}/5){RESET}]"
     print(f"Core AI Models:             {mod_str}")
+
+    chk_str = f"[{GREEN}Completed{RESET}]" if chk_found == 2 else f"[{RED}Missing ({chk_found}/2){RESET}]"
+    print(f"EmoProsopon Checkpoints:    {chk_str}")
     
-    #? 3. Datasets
-    dl_count, ex_count = get_dataset_counts()
     dl_str = f"[{GREEN}{dl_count} Downloaded{RESET}]" if dl_count > 0 else f"[{YELLOW}0 Downloaded{RESET}]"
     ex_str = f"[{GREEN}{ex_count} Extracted{RESET}]" if ex_count > 0 else f"[{YELLOW}0 Extracted{RESET}]"
     
@@ -424,15 +478,18 @@ def print_status(py_cmd):
     print("="*50 + "\n")
 
 def check_launch_requirements(py_cmd):
-    pip_ok = check_pip_requirements(py_cmd)
-    models_found = check_models()
+    pip_ok, models_found, chk_found, _ = run_with_spinner(
+        f"{YELLOW}Verifying launch requirements{RESET}",
+        gather_system_status,
+        py_cmd
+    )
     
-    if not pip_ok or models_found < 4:
+    if not pip_ok or models_found < 5:
         clear_screen()
         print(f"{RED}!!! CANNOT START EMO-PROSOPOPON !!!{RESET}\n")
         if not pip_ok:
             print(f"{YELLOW}- Missing Python libraries. Run '{CYAN}eop --require{YELLOW}' or '{CYAN}eop --setup{YELLOW}'.{RESET}")
-        if models_found < 4:
+        if models_found < 5:
             print(f"{YELLOW}- Missing Core AI Models. Run '{CYAN}eop --tui models{YELLOW}' or '{CYAN}eop --setup{YELLOW}'.{RESET}")
         
         input(f"\nPress Enter to exit...")
@@ -491,12 +548,14 @@ def display_help(args_path=None):
 def run_tui(target, py_cmd):
     if target == "models":
         subprocess.run([py_cmd, os.path.join(BASE_DIR, "downloaders", "download_models.py")])
+    elif target == "checkpoints":
+        subprocess.run([py_cmd, os.path.join(BASE_DIR, "downloaders", "download_checkpoints.py")])
     elif target == "datasets":
         subprocess.run([py_cmd, os.path.join(BASE_DIR, "downloaders", "download_dataset.py")])
     elif target == "extractor":
         subprocess.run([py_cmd, os.path.join(BASE_DIR, "downloaders", "extract_and_sort_dataset.py")])
     else:
-        print(f"{RED}Invalid TUI target. Use: models, datasets, or extractor.{RESET}")
+        print(f"{RED}Invalid TUI target. Use: models, checkpoints, datasets or extractor.{RESET}")
 
 def run_setup(py_cmd):
     clear_screen()
@@ -514,12 +573,21 @@ def run_setup(py_cmd):
     
     #? 3. Data Prompt
     clear_screen()
-    print(f"[{GREEN}3/3{RESET}] Training Data")
-    choice = input(f"\nDo you want to download and extract datasets for training now? (y/n): ").strip().lower()
+    print(f"[{GREEN}3/3{RESET}] Emotion Model Weights")
+    print("\nHow would you like to prepare the emotion recognition models?")
+    print("1. Download pre-trained checkpoint")
+    print("2. Go to training")
+    print("\n0. Skip and finish set up")
     
-    if choice in ['y', 'yes']:
+    choice = input("\nSelect an option: ").strip()
+    if choice == '1':
+        run_tui("checkpoints", py_cmd)
+    elif choice == '2':
         run_tui("datasets", py_cmd)
         run_tui("extractor", py_cmd)
+    elif choice == '0':
+        print(f"\n{YELLOW}Skipping model weights configuration...{RESET}")
+        time.sleep(1)
         
     clear_screen()
     print(f"{GREEN}Setup Complete!{RESET}")
@@ -604,6 +672,9 @@ def main():
 
     elif command in ['--installer', '-i']:
         run_installer(py_cmd)
+
+    elif command in ['--status', '-st']:
+        print_status(py_cmd)
 
     elif command in ['--version', '-v']:
         version = get_version()

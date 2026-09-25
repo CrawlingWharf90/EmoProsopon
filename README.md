@@ -25,7 +25,7 @@ EmoProsopon breaks away from traditional static image classification. Instead of
 
 Setting up EmoProsopon is fully automated via our custom CLI orchestrator, `eop`.
 
-1. **Install the Software:** Run the provided EmoProsopon installer for your operating system. This will extract the files and automatically add the `eop` command to your system PATH.
+1. **Install the Software:** Run the provided [EmoProsopon installer](https://github.com/CrawlingWharf90/EmoProsopon/releases) for your operating system. This will extract the files and automatically add the `eop` command to your system PATH.
 2. **Verify Installation:** Open your terminal and run:
 ```bash
 eop --version
@@ -57,6 +57,7 @@ The `eop` command is your master orchestrator. It handles environment configurat
 | :--- | :--- | :--- |
 | `eop --start` | `-s` | **Launch the main engine GUI.** Opens the launcher to select your input source (Camera, Video, or Screen). Requires pip dependencies and core models. |
 | `eop --setup` | `-g` | **Run the first-time setup wizard.** Guides you through installing dependencies, downloading core models, and optionally fetching training datasets. |
+| `eop --status` | `-st` | **Check EmoProsopon Status** Prints a simple status menu showing if requirements have been fullfiled and if models or datasets have been downloaded |
 | `eop --require` | `-r` | **Install Python dependencies.** Reads from `downloaders/requirements.txt` to install necessary packages (OpenCV, MediaPipe, PyTorch, etc.). |
 | `eop --tui <target>` | `-t` | **Open an interactive TUI manager.** Replace `<target>` with `models`, `datasets`, or `extractor` to open the respective Terminal User Interface. |
 | `eop --train [target]` | `-n` | **Run ML training pipeline.** Runs both harvesting and training sequentially. See arguments below for targeting specific modalities (Static/Kinematic). |
