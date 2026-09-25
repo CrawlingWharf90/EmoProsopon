@@ -61,7 +61,7 @@ class UnixManager(tk.Tk):
             shutil.copytree(REPO_ROOT, INSTALL_DIR, ignore=shutil.ignore_patterns(
                 'installers', '.vscode', '__pycache__', '*.pyc', 
                 'dataset', 'unpkged_datasets', 'sorted_datasets', 
-                'processed_data', 'models', 'checkpoints'
+                'processed_data', 'models', 'checkpoints', '.eop_config'
             ))
             
             os.chmod(os.path.join(INSTALL_DIR, "eop.py"), 0o755)

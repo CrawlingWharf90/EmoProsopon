@@ -16,7 +16,7 @@ WizardStyle=modern
 
 [Files]
 ; Copy everything from the root directory, but ignore git, vscode, and all of the heavy stuff
-Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".git\*, installers\*, .vscode\*, __pycache__\*, *.pyc, dataset\*, unpkged_datasets\*, sorted_datasets\*, processed_data\*, models\*, checkpoints\*"
+Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".git\*, installers\*, .vscode\*, __pycache__\*, *.pyc, dataset\*, unpkged_datasets\*, sorted_datasets\*, processed_data\*, models\*, checkpoints\*, .eop_config"
 
 [Registry]
 ; Safely append the installation directory to the User PATH so 'eop' works globally
